@@ -470,14 +470,6 @@ def test_request_advisor_sets_flag():
     assert standard._state.advisor_requested is True
 
 
-# ── ask_user ────────────────────────────────────────────────────────────────
-
-
-def test_ask_user():
-    result = standard.tool_ask_user(question="Which option do you prefer?")
-    assert result["status"] == "ok"
-    assert result["output"]["question"] == "Which option do you prefer?"
-
 
 # ── jobs_list tool ──────────────────────────────────────────────────────────
 

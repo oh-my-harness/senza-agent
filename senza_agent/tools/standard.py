@@ -471,14 +471,6 @@ def tool_consult_advisor(
         return _err(str(e))
 
 
-# ── Ask user ────────────────────────────────────────────────────────────────
-
-
-def tool_ask_user(question: str = "") -> dict:
-    """Ask the human a question and pause until they reply."""
-    return _ok({"question": question})
-
-
 # ── Evolved tools: dynamic registration ─────────────────────────────────────
 
 

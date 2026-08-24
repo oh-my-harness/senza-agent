@@ -382,6 +382,12 @@ class StateBridge:
                 if isinstance(m, dict) and m.get("role") == "assistant" and m.get("text"):
                     answer = m["text"]
                     break
+            # Skip if the last thought already contains this text (turn_end emitted it)
+            for existing in reversed(self._current_events):
+                if existing.get("type") == "thought" and existing.get("thought"):
+                    if existing["thought"] == answer or answer in existing["thought"]:
+                        return None  # duplicate — turn_end already showed it
+                    break
             return {"type": "done", "answer": answer, "idx": idx}
 
         # settled → done (if no agent_end seen)

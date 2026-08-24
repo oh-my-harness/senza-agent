@@ -111,16 +111,12 @@ class TaskManager:
         full_text: list[str] = []
 
         try:
-            # Use prompt_async — runs prompt_and_collect in a thread pool.
-            # Returns all events as a list (works across threads unlike stream_prompt).
-            raw_events = await self._harness.prompt_async(text, timeout_ms=120000)
-            for ev in raw_events:
+            import senza
+            async for ev in senza.stream_prompt(self._harness, text, timeout_ms=30000):
                 if self._cancel_flag:
                     break
                 wire = self._normalize_event(ev)
                 events.append(wire)
-                if wire.get("type") == "text_delta":
-                    full_text.append(wire.get("text", ""))
                 await self._broadcast({"type": "event", "event": wire})
                 if self._on_event:
                     import inspect

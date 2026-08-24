@@ -156,12 +156,6 @@ def get_standard_tools() -> list:
         }, ["question"]),
         callback=standard.tool_consult_advisor,
     ))
-    tools.append(senza.create_tool(
-        name="ask_user",
-        description="Ask the human a question when you need clarification or missing information to proceed. Do NOT use this for greetings or simple conversations — respond directly instead.",
-        parameters=_str_schema({"question": "The question to ask the human"}, ["question"]),
-        callback=standard.tool_ask_user,
-    ))
 
     # ── Evolved tools ───────────────────────────────────────────────────────
     tools.append(senza.create_tool(
