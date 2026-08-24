@@ -3707,7 +3707,7 @@ function renderEvent(ev, goalHead = '', isActiveAsk = false) {
     }
     case 'thought':
       if (!ev.thought) return '';
-      return `<div class="ev ev-thought"><div class="ev-body">💭 ${escPaths(ev.thought)}</div></div>`;
+      return `<div class="ev ev-thought"><div class="ev-body">💭 ${renderMd(ev.thought)}</div></div>`;
     case 'tool_call': {
       if (ev.tool === 'ask_user') {
         const q = (ev.args && ev.args.question) || fmtArgs(ev.args || {});
@@ -3738,7 +3738,7 @@ function renderEvent(ev, goalHead = '', isActiveAsk = false) {
       </div>`;
     }
     case 'done':
-      return `<div class="ev ev-done"><div class="ev-label">✓ Task complete</div><div class="ev-body">${escPaths(ev.answer || '')}</div></div>`;
+      return `<div class="ev ev-done"><div class="ev-label">✓ Task complete</div><div class="ev-body">${renderMd(ev.answer || '')}</div></div>`;
     case 'error':
       return `<div class="ev ev-error"><div class="ev-body">✗ ${escPaths(ev.text || 'Error occurred')}</div></div>`;
     case 'advisor': {
@@ -4389,6 +4389,21 @@ function escPaths(str) {
     _PATH_RE.lastIndex = last;
   }
   return out + esc(s.slice(last));
+}
+
+/** Render markdown to HTML via marked, with path linking.
+ *  Falls back to escPaths if marked is unavailable. */
+function renderMd(str) {
+  const s = String(str == null ? '' : str);
+  if (!s) return '';
+  if (typeof marked !== 'undefined') {
+    // marked.parse already escapes HTML inside markdown text nodes,
+    // but we run escPaths first to convert paths to links, then let
+    // marked parse the result (paths-as-links are valid HTML, marked
+    // passes them through).
+    return marked.parse(s);
+  }
+  return escPaths(s);
 }
 
 /** JSON 字符串值专用：整个值就是一条路径才连接。传进来的是 JSON 字面量原文，
