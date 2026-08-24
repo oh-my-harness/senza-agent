@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senza-agent"
+version = "0.1.0"
+description = "Out-of-the-box general-purpose AI agent built on Senza SDK"
+requires-python = ">=3.9"
+dependencies = [
+    "senza-sdk",
+    "aiohttp",
+]
+
+[project.scripts]
+senza-agent = "senza_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["senza_agent*"]
