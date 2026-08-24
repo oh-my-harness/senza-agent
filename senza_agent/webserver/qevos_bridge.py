@@ -167,6 +167,9 @@ class StateBridge:
         }
         self._current_events: list[dict[str, Any]] = []
         self._current_text: list[str] = []
+        self._turn_count: int = 0
+        self._seen_tool_calls: set[str] = set()
+        self._seen_tool_results: set[str] = set()
 
     @property
     def state(self) -> dict[str, Any]:
@@ -273,55 +276,117 @@ class StateBridge:
         await self.broadcast()
 
     def _convert_event(self, ev: dict[str, Any]) -> Optional[dict[str, Any]]:
-        """Convert a Senza SDK event dict to QevosAgent dashboard event format."""
+        """Convert a Senza SDK event dict to QevosAgent dashboard event format.
+
+        Uses SDK high-level events (not delta tokens):
+        - tool_execution_start → tool_call (has tool_name + args)
+        - tool_execution_end   → tool_result (has result.text + ok)
+        - turn_end             → thought (has message_text = assistant prose)
+        - agent_end            → done (has new_messages with final answer)
+        - error                → error
+        """
         ev_type = ev.get("type", "")
         idx = len(self._current_events)
 
-        # Skip non-rendered Sensa events
-        if ev_type in ("turn_start", "message_start", "message_update",
-                        "phase_change", "agent_start", "token_stats"):
+        # Skip low-level / non-rendered events
+        if ev_type in (
+            "turn_start", "message_start", "message_update", "message_end",
+            "phase_change", "model_update", "thinking_level_update",
+            "tools_update", "active_tools_update", "resources_update",
+            "session_info_update", "queue_update", "savepoint",
+            "branch_forked", "branch_switched", "branch_deleted", "branch_summarized",
+            "compaction_start", "compaction_end",
+            "agent_start", "retry_attempt",
+            "text_delta", "thinking_delta",
+            "tool_call_start", "tool_call_args_delta", "tool_call_end",
+            "tool_execution_update",
+        ):
             return None
 
-        # text_delta → accumulate text, render as thought or text
-        if ev_type == "text_delta":
-            text = ev.get("text", "")
-            if not text:
+        # Deduplicate tool events: harness_tool_call_* and tool_execution_*
+        # share the same tool_use_id. Prefer tool_execution_* (agent-level),
+        # skip harness_tool_call_* to avoid duplicate render.
+        tool_id = ev.get("tool_use_id", "")
+        if ev_type == "harness_tool_call_start":
+            if tool_id and tool_id in self._seen_tool_calls:
                 return None
-            self._current_text.append(text)
-            return {"type": "text_delta", "text": text, "idx": idx}
-
-        # thinking_delta → thought
-        if ev_type == "thinking_delta":
-            thought = ev.get("thinking", "")
-            if not thought:
-                return None
-            return {"type": "thought", "thought": thought, "idx": idx}
-
-        # tool_call
-        if ev_type == "tool_call":
+            self._seen_tool_calls.add(tool_id)
             return {
                 "type": "tool_call",
-                "tool": ev.get("tool", ev.get("name", "unknown")),
-                "args": ev.get("args", ev.get("arguments", {})),
-                "thought": ev.get("thought", ""),
+                "tool": ev.get("tool_name", "unknown"),
+                "args": ev.get("args", {}),
+                "thought": "",
                 "idx": idx,
-                "iter": ev.get("iter", 0),
+                "iter": self._turn_count,
             }
-
-        # tool_result
-        if ev_type == "tool_result":
+        if ev_type == "harness_tool_call_end":
+            if tool_id and tool_id in self._seen_tool_results:
+                return None
+            self._seen_tool_results.add(tool_id)
+            result = ev.get("result", {})
+            output = ""
+            if isinstance(result, dict):
+                output = result.get("details", result.get("text", ""))
             return {
                 "type": "tool_result",
-                "tool": ev.get("tool", ev.get("name", "unknown")),
-                "output": ev.get("output", ev.get("result", "")),
-                "success": ev.get("success", True),
+                "tool": ev.get("tool_name", ""),
+                "output": str(output),
+                "success": not result.get("is_error", False) if isinstance(result, dict) else True,
                 "idx": idx,
             }
 
-        # settled/agent_end → done
-        if ev_type in ("settled", "agent_end"):
-            text = "".join(self._current_text)
-            return {"type": "done", "answer": text, "idx": idx}
+        # tool_execution_start → Qevos tool_call (skip if harness already emitted)
+        if ev_type == "tool_execution_start":
+            if tool_id and tool_id in self._seen_tool_calls:
+                return None
+            self._seen_tool_calls.add(tool_id)
+            return {
+                "type": "tool_call",
+                "tool": ev.get("tool_name", "unknown"),
+                "args": ev.get("args", {}),
+                "thought": "",
+                "idx": idx,
+                "iter": self._turn_count,
+            }
+
+        # tool_execution_end → Qevos tool_result
+        if ev_type == "tool_execution_end":
+            if tool_id and tool_id in self._seen_tool_results:
+                return None
+            self._seen_tool_results.add(tool_id)
+            result = ev.get("result", {})
+            output = ""
+            if isinstance(result, dict):
+                output = result.get("text", result.get("details", ""))
+            return {
+                "type": "tool_result",
+                "tool": ev.get("tool_name", ""),
+                "output": str(output),
+                "success": ev.get("ok", True),
+                "idx": idx,
+            }
+
+        # turn_end → thought (assistant prose for this turn)
+        if ev_type == "turn_end":
+            self._turn_count += 1
+            text = ev.get("message_text", "")
+            if not text:
+                return None
+            return {"type": "thought", "thought": text, "idx": idx, "iter": self._turn_count}
+
+        # agent_end → done (final answer from last assistant message)
+        if ev_type == "agent_end":
+            answer = ""
+            msgs = ev.get("new_messages", [])
+            for m in reversed(msgs):
+                if isinstance(m, dict) and m.get("role") == "assistant" and m.get("text"):
+                    answer = m["text"]
+                    break
+            return {"type": "done", "answer": answer, "idx": idx}
+
+        # settled → done (if no agent_end seen)
+        if ev_type == "settled":
+            return {"type": "done", "answer": "", "idx": idx}
 
         # aborted/error
         if ev_type == "aborted":
@@ -336,6 +401,9 @@ class StateBridge:
         """Called when a new task starts."""
         self._current_events = []
         self._current_text = []
+        self._turn_count = 0
+        self._seen_tool_calls = set()
+        self._seen_tool_results = set()
         # Add goal event
         goal_ev = {"type": "goal", "text": text, "idx": 0}
         self._current_events.append(goal_ev)
