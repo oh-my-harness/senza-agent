@@ -473,9 +473,9 @@ mark.sh { background: rgba(210,153,34,0.35); color: inherit; border-radius: 2px;
 .ev-goal .expand-btn { color: var(--blue); padding: 6px 0 0; }
 
 .ev-thought { background: rgba(210,168,255,0.05); border-left: 3px solid rgba(210,168,255,0.4); padding: 7px 12px; }
-.ev-thought .ev-body { color: #c5b3f0; font-size: 16px; font-style: italic; line-height: 1.6; }
+.ev-thought .ev-body { color: #c5b3f0; font-size: 16px; line-height: 1.6; }
 .ev-streaming { background: rgba(210,168,255,0.05); border-left: 3px solid rgba(210,168,255,0.3); padding: 7px 12px; }
-.ev-stream-thinking { color: #8a7ba8; font-size: 14px; font-style: italic; line-height: 1.5; margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; }
+.ev-stream-thinking { color: #8a7ba8; font-size: 14px; line-height: 1.5; margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; }
 .ev-stream-text { color: #c5b3f0; font-size: 16px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .ev-stream-cursor { animation: blink 0.8s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
@@ -2360,7 +2360,6 @@ function _advisorOnToggle(logIdx, section, detailsEl) {
   if (detailsEl.open) _advisorOpenSet.add(key); else _advisorOpenSet.delete(key);
 }
 let gPendingToolIdx = null;       // idx of the tool_call we're currently streaming for
-let gLastRenderedEvents = null;   // last events array passed to renderEvents (for streaming fast path)
 const gJobExpanded = {};          // { jobId: boolean } — which job cards are expanded
 let gSysPromptExpanded = false;   // persist System-Prompt expand state across re-renders
 let gGoalExpanded      = false;   // persist Goal "show more" (full assembled goal) across re-renders
@@ -2510,12 +2509,43 @@ function setWsUI(ok) {
   document.getElementById('wsLabel').textContent = ok ? 'Live' : 'Reconnecting…';
 }
 
+// Streaming fast path: when only the last event (streaming type) grew,
+// update just that element's innerHTML — skip the full renderAll rebuild.
+// Returns true if handled (caller should skip renderAll), false otherwise.
+// _gPrevStateEvents is saved by the caller BEFORE gState is overwritten.
+let _gPrevStateEvents = null;
+function _streamingFastPath(curEvs) {
+  const prevEvs = _gPrevStateEvents;
+  _gPrevStateEvents = curEvs;
+  if (!prevEvs || !curEvs || curEvs.length < 1) return false;
+  const lastEv = curEvs[curEvs.length - 1];
+  if (lastEv.type !== 'streaming') return false;
+  if (prevEvs.length !== curEvs.length) return false;
+  // JSON-parsed objects are fresh each time, so compare by content, not reference.
+  // Compare all events except the last (streaming) one by JSON.stringify.
+  for (let i = 0; i < curEvs.length - 1; i++) {
+    if (JSON.stringify(prevEvs[i]) !== JSON.stringify(curEvs[i])) return false;
+  }
+  const log = document.getElementById('eventsLog');
+  if (!log) return false;
+  const el = log.querySelector('.ev-streaming');
+  if (!el) return false;  // element not yet rendered — fall through to full render
+  let parts = '';
+  if (lastEv.thinking) parts += `<div class="ev-stream-thinking">🧠 ${esc(lastEv.thinking)}</div>`;
+  if (lastEv.text) parts += `<div class="ev-stream-text">💭 ${esc(lastEv.text)}<span class="ev-stream-cursor">▋</span></div>`;
+  el.innerHTML = parts;
+  if (gAutoScroll) log.scrollTop = log.scrollHeight;
+  return true;
+}
+
 function handleMsg(msg) {
   if (msg.type === 'state') {
     // Remember which run was live BEFORE updating gState.
     // If the user was already watching the previous live run (or no run),
     // automatically follow the new activeRunId when it changes.
     const prevActiveRunId = gState && gState.activeRunId;
+    // Save previous events BEFORE overwriting gState, for streaming fast path
+    const prevEvents = (gState && gState.events) || null;
     gState = msg;
     if ((msg.instanceName || '') !== gInstanceName) {
       gInstanceName = msg.instanceName || '';
@@ -2533,6 +2563,11 @@ function handleMsg(msg) {
 
     if (wasOnLive) {
       gViewRunId = msg.activeRunId;
+      // Streaming fast path: if only the last event (streaming type) changed
+      // since the previous state, update just that DOM element without calling
+      // renderAll — avoids rebuilding the entire UI on every delta token.
+      _gPrevStateEvents = prevEvents;
+      if (_streamingFastPath(msg.events || [])) return;
       renderAll(msg);
     } else {
       // User explicitly pinned to a historical run — only refresh the sidebar
@@ -3482,29 +3517,7 @@ function renderEvents(events, meta = {}, systemPrompt = '', patchEvents = [], aw
   const log   = document.getElementById('eventsLog');
   const badge = document.getElementById('evCount');
   badge.textContent = events.length;
-  // Fast path: if only the last event (streaming) changed, update it in-place
-  // to avoid rebuilding the entire events log innerHTML on every delta token.
-  if (events.length > 0 && events[events.length - 1].type === 'streaming'
-      && gLastRenderedEvents && gLastRenderedEvents.length === events.length) {
-    let allSameExceptLast = true;
-    for (let i = 0; i < events.length - 1; i++) {
-      if (gLastRenderedEvents[i] !== events[i]) { allSameExceptLast = false; break; }
-    }
-    if (allSameExceptLast) {
-      const el = log.querySelector('.ev-streaming');
-      if (el) {
-        const ev = events[events.length - 1];
-        let parts = '';
-        if (ev.thinking) parts += `<div class="ev-stream-thinking">🧠 ${esc(ev.thinking)}</div>`;
-        if (ev.text) parts += `<div class="ev-stream-text">💭 ${esc(ev.text)}<span class="ev-stream-cursor">▋</span></div>`;
-        el.innerHTML = parts;
-        if (gAutoScroll) log.scrollTop = log.scrollHeight;
-        gLastRenderedEvents = events;
-        return;
-      }
-    }
-  }
-  gLastRenderedEvents = events;
+
 
   // ── 执行图节点过滤 ────────────────────────────────────────────────────────
   // 注意：节点的 iter_range 来自 agent 的 state.iteration，而 ev.iter 是看板
