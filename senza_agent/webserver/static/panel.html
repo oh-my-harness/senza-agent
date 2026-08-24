@@ -2360,6 +2360,7 @@ function _advisorOnToggle(logIdx, section, detailsEl) {
   if (detailsEl.open) _advisorOpenSet.add(key); else _advisorOpenSet.delete(key);
 }
 let gPendingToolIdx = null;       // idx of the tool_call we're currently streaming for
+let gLastRenderedEvents = null;   // last events array passed to renderEvents (for streaming fast path)
 const gJobExpanded = {};          // { jobId: boolean } — which job cards are expanded
 let gSysPromptExpanded = false;   // persist System-Prompt expand state across re-renders
 let gGoalExpanded      = false;   // persist Goal "show more" (full assembled goal) across re-renders
@@ -3481,6 +3482,29 @@ function renderEvents(events, meta = {}, systemPrompt = '', patchEvents = [], aw
   const log   = document.getElementById('eventsLog');
   const badge = document.getElementById('evCount');
   badge.textContent = events.length;
+  // Fast path: if only the last event (streaming) changed, update it in-place
+  // to avoid rebuilding the entire events log innerHTML on every delta token.
+  if (events.length > 0 && events[events.length - 1].type === 'streaming'
+      && gLastRenderedEvents && gLastRenderedEvents.length === events.length) {
+    let allSameExceptLast = true;
+    for (let i = 0; i < events.length - 1; i++) {
+      if (gLastRenderedEvents[i] !== events[i]) { allSameExceptLast = false; break; }
+    }
+    if (allSameExceptLast) {
+      const el = log.querySelector('.ev-streaming');
+      if (el) {
+        const ev = events[events.length - 1];
+        let parts = '';
+        if (ev.thinking) parts += `<div class="ev-stream-thinking">🧠 ${esc(ev.thinking)}</div>`;
+        if (ev.text) parts += `<div class="ev-stream-text">💭 ${esc(ev.text)}<span class="ev-stream-cursor">▋</span></div>`;
+        el.innerHTML = parts;
+        if (gAutoScroll) log.scrollTop = log.scrollHeight;
+        gLastRenderedEvents = events;
+        return;
+      }
+    }
+  }
+  gLastRenderedEvents = events;
 
   // ── 执行图节点过滤 ────────────────────────────────────────────────────────
   // 注意：节点的 iter_range 来自 agent 的 state.iteration，而 ev.iter 是看板
