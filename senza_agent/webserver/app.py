@@ -114,6 +114,7 @@ class WebServer:
         # Root: serve dashboard HTML, or upgrade to WebSocket for state stream.
         # QevosAgent frontend connects to ws://host (root path) for state.
         app.router.add_get("/", self._root_handler)
+        app.router.add_get("/{filename:[^/]+\\.(js|css|png|svg|ico|woff2?|ttf)}", self._static_file_handler)
 
         # QevosAgent-compatible REST API
         self.qevos_api.add_routes(app)
@@ -555,4 +556,11 @@ class WebServer:
         index = _STATIC_DIR / "panel.html"
         if index.is_file():
             return web.FileResponse(index)
-        return web.Response(text="senza-agent web server", content_type="text/html")
+
+    async def _static_file_handler(self, request: web.Request) -> web.StreamResponse:
+        """Serve static files from root path (e.g. /cm6-bundle.js, /ui_i18n.js)."""
+        filename = request.match_info["filename"]
+        filepath = _STATIC_DIR / filename
+        if filepath.is_file():
+            return web.FileResponse(filepath)
+        return web.Response(text="404: Not Found", status=404)
