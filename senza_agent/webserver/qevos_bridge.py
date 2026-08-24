@@ -417,9 +417,14 @@ class StateBridge:
         await self.broadcast()
 
     async def on_task_end(self, summary: dict) -> None:
-        """Called when a task ends."""
-        self._state["agentAlive"] = False
-        self._state["status"] = {"status": "settled"}
+        """Called when a task ends.
+
+        Keeps agentAlive=True so the dashboard routes follow-up messages
+        to /api/inject (which reuses the harness's conversation context)
+        instead of /api/launch (which starts a fresh run).
+        """
+        self._state["agentAlive"] = True
+        self._state["status"] = {"status": "idle"}
         # Save run to disk
         run_id = self._state.get("activeRunId", f"run_{int(time.time())}")
         if run_id:
@@ -434,6 +439,24 @@ class StateBridge:
                 encoding="utf-8",
             )
         self._refresh_runs()
+        await self.broadcast()
+
+    async def on_followup(self, text: str) -> None:
+        """Called for a follow-up message after a task has ended.
+
+        Appends a goal event to the existing events list (does NOT clear
+        history) and marks the agent as running again.
+        """
+        self._seen_tool_calls = set()
+        self._seen_tool_results = set()
+        goal_ev = {"type": "goal", "text": text, "idx": len(self._current_events)}
+        self._current_events.append(goal_ev)
+        self._state["events"] = self._current_events[-500:]
+        self._state["status"] = {"status": "running"}
+        self._state["agentAlive"] = True
+        run_id = f"run_{int(time.time())}"
+        self._state["activeRunId"] = run_id
+        self._state["meta"] = {"_user_goal": text[:500], "goal": text[:500]}
         await self.broadcast()
 
 # ── API Handlers ───────────────────────────────────────────────────────────
@@ -533,8 +556,12 @@ class QevosAPI:
         command = (body.get("command") or "").strip()
         if not command:
             return web.json_response({"error": "command required"}, status=400)
-        # In senza-agent, inject = start a new task with the command
-        await self.sb.on_task_start(command)
+        # Strip /inject prefix — dashboard auto-prepends it for non-slash input
+        if command.startswith("/inject "):
+            command = command[len("/inject "):].strip()
+        # Follow-up message: append goal event without clearing history.
+        # The harness retains conversation context across prompt_async calls.
+        await self.sb.on_followup(command)
         result = await self.task.start_task(command)
         return web.json_response(result)
 

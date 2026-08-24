@@ -104,12 +104,8 @@ class TaskManager:
             "text": text[:500],
             "timestamp": time.time(),
         })
-        if self._on_start:
-            import inspect
-            if inspect.iscoroutinefunction(self._on_start):
-                await self._on_start(text)
-            else:
-                self._on_start(text)
+        # _on_start callback removed — API handlers call on_task_start/on_followup
+        # directly, so _run_task no longer manages event state.
 
         events: list[dict[str, Any]] = []
         full_text: list[str] = []
