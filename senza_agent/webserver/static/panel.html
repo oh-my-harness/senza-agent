@@ -474,6 +474,11 @@ mark.sh { background: rgba(210,153,34,0.35); color: inherit; border-radius: 2px;
 
 .ev-thought { background: rgba(210,168,255,0.05); border-left: 3px solid rgba(210,168,255,0.4); padding: 7px 12px; }
 .ev-thought .ev-body { color: #c5b3f0; font-size: 16px; font-style: italic; line-height: 1.6; }
+.ev-streaming { background: rgba(210,168,255,0.05); border-left: 3px solid rgba(210,168,255,0.3); padding: 7px 12px; }
+.ev-stream-thinking { color: #8a7ba8; font-size: 14px; font-style: italic; line-height: 1.5; margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; }
+.ev-stream-text { color: #c5b3f0; font-size: 16px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.ev-stream-cursor { animation: blink 0.8s steps(2) infinite; color: var(--accent); }
+@keyframes blink { 50% { opacity: 0; } }
 
 .ev-tool-call { background: rgba(63,185,80,0.05); border-left: 3px solid rgba(63,185,80,0.5); }
 .ev-header { display: flex; align-items: center; gap: 8px; padding: 7px 12px 4px; flex-wrap: wrap; }
@@ -3706,6 +3711,13 @@ function renderEvent(ev, goalHead = '', isActiveAsk = false) {
         <div class="ev-header"><span class="ev-arrow">🩹</span><span class="ev-patch-label">Runtime Patch</span><span class="ev-patch-meta">${meta}</span></div>
         <div class="ev-patch-rule">${esc(ev.rule)}</div>
       </div>`;
+    }
+    case 'streaming': {
+      let parts = '';
+      if (ev.thinking) parts += `<div class="ev-stream-thinking">🧠 ${esc(ev.thinking)}</div>`;
+      if (ev.text) parts += `<div class="ev-stream-text">💭 ${esc(ev.text)}<span class="ev-stream-cursor">▋</span></div>`;
+      if (!parts) return '';
+      return `<div class="ev ev-streaming">${parts}</div>`;
     }
     case 'thought':
       if (!ev.thought) return '';

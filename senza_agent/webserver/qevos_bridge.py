@@ -22,6 +22,9 @@ from typing import Any, Optional
 
 from aiohttp import web, WSMsgType
 
+# Sentinel: _convert_event modified _current_events in-place; broadcast but don't append.
+_MODIFIED = object()
+
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -170,6 +173,7 @@ class StateBridge:
         self._turn_count: int = 0
         self._seen_tool_calls: set[str] = set()
         self._seen_tool_results: set[str] = set()
+        self._streaming_idx: int | None = None  # idx of current streaming event
 
     @property
     def state(self) -> dict[str, Any]:
@@ -257,13 +261,20 @@ class StateBridge:
         Converts Senza SDK event types to QevosAgent dashboard format.
         """
         qev = self._convert_event(event)
+        if qev is _MODIFIED:
+            # Event modified _current_events in-place (streaming delta or turn_end
+            # replacement). Broadcast the update without appending.
+            self._state["status"] = {"status": "running"}
+            self._state["events"] = self._current_events[-500:]
+            await self.broadcast()
+            return
         if qev is None:
             return  # skip events we don't render
 
         self._current_events.append(qev)
         ev_type = qev.get("type", "")
 
-        if ev_type in ("text_delta", "tool_call", "thought"):
+        if ev_type in ("streaming", "tool_call", "thought"):
             self._state["status"] = {"status": "running"}
         elif ev_type in ("done", "settled", "agent_end"):
             self._state["status"] = {"status": "settled"}
@@ -278,10 +289,11 @@ class StateBridge:
     def _convert_event(self, ev: dict[str, Any]) -> Optional[dict[str, Any]]:
         """Convert a Senza SDK event dict to QevosAgent dashboard event format.
 
-        Uses SDK high-level events (not delta tokens):
+        Uses SDK delta + high-level events:
+        - thinking_delta/text_delta → accumulated into a "streaming" event (in-place)
+        - turn_end             → replaces streaming event with final "thought"
         - tool_execution_start → tool_call (has tool_name + args)
         - tool_execution_end   → tool_result (has result.text + ok)
-        - turn_end             → thought (has message_text = assistant prose)
         - agent_end            → done (has new_messages with final answer)
         - error                → error
         """
@@ -297,11 +309,28 @@ class StateBridge:
             "branch_forked", "branch_switched", "branch_deleted", "branch_summarized",
             "compaction_start", "compaction_end",
             "agent_start", "retry_attempt",
-            "text_delta", "thinking_delta",
             "tool_call_start", "tool_call_args_delta", "tool_call_end",
             "tool_execution_update",
         ):
             return None
+        # thinking_delta / text_delta → accumulate into a single "streaming" event
+        # that grows in-place. On turn_end, the streaming event is replaced by
+        # a final "thought" event with the complete message_text.
+        if ev_type in ("thinking_delta", "text_delta"):
+            chunk = ev.get("thinking") or ev.get("text", "")
+            if not chunk:
+                return None
+            if self._streaming_idx is None:
+                # Create new streaming event
+                sev = {"type": "streaming", "thinking": "", "text": "", "idx": idx}
+                self._current_events.append(sev)
+                self._streaming_idx = len(self._current_events) - 1
+            sev = self._current_events[self._streaming_idx]
+            if ev_type == "thinking_delta":
+                sev["thinking"] += chunk
+            else:
+                sev["text"] += chunk
+            return _MODIFIED  # modified in-place, broadcast but don't append
 
         # Deduplicate tool events: harness_tool_call_* and tool_execution_*
         # share the same tool_use_id. Prefer tool_execution_* (agent-level),
@@ -366,12 +395,24 @@ class StateBridge:
                 "idx": idx,
             }
 
-        # turn_end → thought (assistant prose for this turn)
+        # turn_end → thought (replace streaming event with final text)
         if ev_type == "turn_end":
             self._turn_count += 1
             text = ev.get("message_text", "")
             if not text:
+                # No text — clear streaming event if present
+                if self._streaming_idx is not None:
+                    self._current_events.pop(self._streaming_idx)
+                    self._streaming_idx = None
+                    return _MODIFIED
                 return None
+            # Replace the streaming event with a final thought
+            if self._streaming_idx is not None:
+                old_idx = self._current_events[self._streaming_idx]["idx"]
+                thought_ev = {"type": "thought", "thought": text, "idx": old_idx, "iter": self._turn_count}
+                self._current_events[self._streaming_idx] = thought_ev
+                self._streaming_idx = None
+                return _MODIFIED
             return {"type": "thought", "thought": text, "idx": idx, "iter": self._turn_count}
 
         # agent_end → done (final answer from last assistant message)
@@ -408,8 +449,8 @@ class StateBridge:
         self._current_events = []
         self._current_text = []
         self._turn_count = 0
-        self._seen_tool_calls = set()
         self._seen_tool_results = set()
+        self._streaming_idx = None
         # Add goal event
         goal_ev = {"type": "goal", "text": text, "idx": 0}
         self._current_events.append(goal_ev)
@@ -456,6 +497,7 @@ class StateBridge:
         self._seen_tool_calls = set()
         self._seen_tool_results = set()
         goal_ev = {"type": "goal", "text": text, "idx": len(self._current_events)}
+        self._streaming_idx = None
         self._current_events.append(goal_ev)
         self._state["events"] = self._current_events[-500:]
         self._state["status"] = {"status": "running"}
