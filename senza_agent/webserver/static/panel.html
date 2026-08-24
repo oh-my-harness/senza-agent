@@ -1817,6 +1817,7 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
       </button>
       <div class="bar-gap"></div>
       <button class="icon-btn on" id="autoScrollBtn" onclick="toggleAutoScroll()">↓ Auto</button>
+      <button class="icon-btn on" id="mdRenderBtn" onclick="toggleMdRender()" title="Toggle markdown rendering">MD</button>
       <button class="icon-btn" id="paneZenBtn" onclick="togglePaneFullscreen()" title="全屏">⛶</button>
     </div>
 
@@ -2329,6 +2330,7 @@ let gTagChipsOpen  = false;   // whether the keyword list shows all keywords vs 
 let gTagsCollapsed = (localStorage.getItem('tagsCollapsed') !== '0');  // whole keyword panel folded (default: yes)
 const UNTAGGED     = '\x00untagged';
 let gAutoScroll    = true;
+let gRenderMd      = true;
 let gWs            = null;
 let gReconnTimer   = null;
 let gConsoleBuf    = [];          // { stream, text }[]  — last 1000 lines
@@ -4208,6 +4210,14 @@ function toggleAutoScroll() {
   }
 }
 
+function toggleMdRender() {
+  gRenderMd = !gRenderMd;
+  const btn = document.getElementById('mdRenderBtn');
+  if (btn) btn.className = 'icon-btn' + (gRenderMd ? ' on' : '');
+  toast(gRenderMd ? 'Markdown rendering ON' : 'Markdown rendering OFF');
+  if (gState) renderAll(gState);
+}
+
 function setTab(name) {
   const tabNames = ['scratchpad', 'jobs', 'console'];
   document.querySelectorAll('.tab-btn').forEach((btn, i) => {
@@ -4396,11 +4406,7 @@ function escPaths(str) {
 function renderMd(str) {
   const s = String(str == null ? '' : str);
   if (!s) return '';
-  if (typeof marked !== 'undefined') {
-    // marked.parse already escapes HTML inside markdown text nodes,
-    // but we run escPaths first to convert paths to links, then let
-    // marked parse the result (paths-as-links are valid HTML, marked
-    // passes them through).
+  if (gRenderMd && typeof marked !== 'undefined') {
     return marked.parse(s);
   }
   return escPaths(s);
