@@ -64,6 +64,35 @@ def behavior_transform_context(state: "AgentState") -> Callable[[dict], dict]:
         except Exception:
             pass
 
+        # 1c. Background task completion notifications
+        try:
+            from senza_agent.tools.async_manager import get_manager as get_async_mgr
+            async_mgr = get_async_mgr()
+            if async_mgr is not None:
+                completed = async_mgr.drain_completed()
+                for job_id, output in completed:
+                    messages.append(_make_user_message(
+                        f"[background] Job {job_id} completed:\n{output}"
+                    ))
+                    injected = True
+        except Exception:
+            pass
+
+        # 1d. Watcher events
+        try:
+            from senza_agent.tools.watcher import get_manager as get_watcher_mgr
+            watcher_mgr = get_watcher_mgr()
+            if watcher_mgr is not None:
+                turn_index = ctx.get("turn_index", 0)
+                events = watcher_mgr.poll(turn_index)
+                for ev in events:
+                    content = ev.get("content", "")
+                    if content:
+                        messages.append(_make_user_message(content))
+                        injected = True
+        except Exception:
+            pass
+
         # 2. General-purpose pending injections (bg tasks, watchers, etc.)
         pending = getattr(state, "pending_injections", None)
         if pending:

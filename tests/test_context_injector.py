@@ -99,3 +99,48 @@ def test_transform_context_graph_stall_injects_hint():
     assert state.advisor_requested is True
 
     graph_tools.set_graph(None)  # cleanup
+
+from senza_agent.tools.async_manager import AsyncJobManager
+
+
+def test_transform_context_injects_completed_bg_jobs():
+    """Completed background jobs are injected as user messages."""
+    mgr = AsyncJobManager()
+    job_id = mgr.start_shell("echo done_bg")
+    for _ in range(50):
+        info = mgr.peek(job_id, wait_secs=0.1)
+        if info["status"] != "running":
+            break
+
+    # Patch the module-level get_manager to return our test manager
+    import senza_agent.tools.async_manager as am_mod
+    original_get = am_mod.get_manager
+    am_mod.get_manager = lambda: mgr
+    try:
+        state = AgentState()
+        hook = behavior_transform_context(state)
+        ctx = _make_ctx([])
+        ctx["turn_index"] = 1
+        result = hook(ctx)
+        assert len(result["messages"]) >= 1
+        bg_msg = result["messages"][0]["content"][0]["text"]
+        assert "done_bg" in bg_msg or job_id in bg_msg
+    finally:
+        am_mod.get_manager = original_get
+
+
+def test_transform_context_no_bg_injection_when_no_jobs():
+    """No completed jobs → no injection."""
+    import senza_agent.tools.async_manager as am_mod
+    mgr = AsyncJobManager()
+    original_get = am_mod.get_manager
+    am_mod.get_manager = lambda: mgr
+    try:
+        state = AgentState()
+        hook = behavior_transform_context(state)
+        ctx = _make_ctx([])
+        ctx["turn_index"] = 1
+        result = hook(ctx)
+        assert result["messages"] == []
+    finally:
+        am_mod.get_manager = original_get
