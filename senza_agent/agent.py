@@ -134,8 +134,8 @@ def create_agent(config: Config) -> Any:
             builder = builder.session_repo(
                 senza.knowledge.jsonl_session_repo(config.sessions_dir)
             )
-        except Exception:
-            pass  # session_repo is optional
+        except Exception as e:
+            print(f"Warning: session_repo setup failed: {e}", file=sys.stderr)
 
     # ── Budget ──────────────────────────────────────────────────────────
     budget_limit = config.behavior.budget_limit
@@ -145,14 +145,14 @@ def create_agent(config: Config) -> Any:
                 lambda ctx, spent: True  # allow continuation, wrapup will handle
             )
             builder = builder.budget(budget_limit, budget_hook)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: budget setup failed: {e}", file=sys.stderr)
 
     # ── Usage ledger ────────────────────────────────────────────────────
     try:
         builder = builder.usage_ledger(senza.UsageLedger())
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: usage_ledger setup failed: {e}", file=sys.stderr)
 
     # ── Standard tools (remember, scratchpad, analyze_content, etc.) ────
     try:
@@ -189,8 +189,8 @@ def create_agent(config: Config) -> Any:
         try:
             source = senza.knowledge.local_source(config.knowledge_dir, "local")
             builder = builder.plugin(senza.knowledge.plugin([source]))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: knowledge plugin setup failed: {e}", file=sys.stderr)
 
     # ── Skills ──────────────────────────────────────────────────────────
     if config.skills_dir:
@@ -198,29 +198,29 @@ def create_agent(config: Config) -> Any:
             skills = senza.load_skills(config.skills_dir)
             if skills:
                 builder = builder.skills(skills)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: skills loading failed: {e}", file=sys.stderr)
 
     # ── MCP ─────────────────────────────────────────────────────────────
     if config.mcp_config:
         try:
             builder = builder.mcp_config_file(config.mcp_config)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: MCP config setup failed: {e}", file=sys.stderr)
 
     # ── Sub-agent spawn ─────────────────────────────────────────────────
     if config.spawn_enabled:
         try:
             builder = builder.enable_spawn(config.model, provider, config.sessions_dir)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: sub-agent spawn setup failed: {e}", file=sys.stderr)
 
     # ── Wire state into tools module ────────────────────────────────────
     try:
         from senza_agent.tools.standard import set_state
         set_state(state)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: failed to set tool state: {e}", file=sys.stderr)
 
     # ── Build ───────────────────────────────────────────────────────────
     harness = builder.build()
