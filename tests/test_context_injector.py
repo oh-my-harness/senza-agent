@@ -144,3 +144,55 @@ def test_transform_context_no_bg_injection_when_no_jobs():
         assert result["messages"] == []
     finally:
         am_mod.get_manager = original_get
+
+from senza_agent.behavior.acceptance_gate import review_completion_report
+
+
+def test_transform_context_injects_remediation_feedback():
+    """When completion_report fails review, inject feedback and set needs_remediation."""
+    state = AgentState()
+    state.completion_report = {
+        "outcome": "done",
+        "evidence_type": "artifact",
+        "evidence": ["/nonexistent/file.py"],
+    }
+    hook = behavior_transform_context(state)
+    ctx = _make_ctx([])
+    result = hook(ctx)
+
+    # Should have injected a remediation message
+    assert len(result["messages"]) >= 1
+    feedback = result["messages"][0]["content"][0]["text"]
+    assert "needs_more_work" in feedback or "missing" in feedback.lower() or "artifact" in feedback.lower()
+    # Should set needs_remediation flag
+    assert state.needs_remediation is True
+    # Should clear completion_report so it's not re-evaluated
+    assert state.completion_report is None
+
+
+def test_transform_context_no_remediation_when_no_report():
+    """No completion_report → no remediation injection."""
+    state = AgentState()
+    hook = behavior_transform_context(state)
+    ctx = _make_ctx([])
+    result = hook(ctx)
+    assert result["messages"] == []
+    assert state.needs_remediation is False
+
+
+def test_transform_context_no_remediation_when_report_passes():
+    """Passing completion_report → no remediation injection, report left intact."""
+    state = AgentState()
+    state.completion_report = {
+        "goal_understanding": "do the thing",
+        "completed_work": ["wrote file.py"],
+        "outcome": "done",
+        "confidence": "high",
+        "evidence_type": "none",
+        "evidence": [],
+    }
+    hook = behavior_transform_context(state)
+    ctx = _make_ctx([])
+    result = hook(ctx)
+    assert result["messages"] == []
+    assert state.needs_remediation is False

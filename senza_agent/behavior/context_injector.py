@@ -40,6 +40,26 @@ def behavior_transform_context(state: "AgentState") -> Callable[[dict], dict]:
         messages = list(ctx.get("messages") or [])
         injected = False
 
+        # 0. Needs-more-work remediation feedback (highest priority)
+        report = getattr(state, "completion_report", None)
+        if report is not None:
+            try:
+                from senza_agent.behavior.acceptance_gate import (
+                    review_completion_report,
+                )
+                verdict, info = review_completion_report(state)
+                if verdict == "needs_more_work":
+                    reason = info.get("reason", "unknown")
+                    feedback = f"[rejected] Completion report needs more work: {reason}"
+                    if "missing" in info:
+                        feedback += f"\nMissing items: {info['missing']}"
+                    messages.append(_make_user_message(feedback))
+                    state.completion_report = None
+                    state.needs_remediation = True
+                    injected = True
+            except Exception:
+                pass
+
         # 1a. Advisor advice (highest priority — strategic guidance)
         advice = (getattr(state, "last_advice", "") or "").strip()
         if advice:
