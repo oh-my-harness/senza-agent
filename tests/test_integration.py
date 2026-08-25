@@ -125,3 +125,87 @@ def test_async_manager_importable():
 def test_watcher_importable():
     from senza_agent.tools.watcher import WatcherManager
     assert WatcherManager is not None
+
+
+# ── Hook pipeline integration smoke tests ───────────────────────────────────
+
+from senza_agent.behavior.context_injector import behavior_transform_context
+from senza_agent.behavior.wrapup import behavior_should_stop
+
+
+def test_full_hook_pipeline_advisor_advice_flow():
+    """Advisor writes advice to state → transform_context injects it → should_stop continues."""
+    from senza_agent.behavior.state import AgentState
+    from senza_agent.config import BehaviorConfig
+    from senza_agent.behavior.bundle import BehaviorBundle
+
+    state = AgentState()
+    config = BehaviorConfig()
+    bundle = BehaviorBundle(state, config)
+
+    # Simulate advisor writing advice
+    state.last_advice = "Break down the problem into smaller steps."
+
+    # transform_context should inject it
+    tctx = behavior_transform_context(state)
+    ctx = {
+        "system_prompt": "test",
+        "messages": [],
+        "turn_index": 1,
+        "run_id": "test",
+        "started_at": "2025-01-01T00:00:00Z",
+    }
+    result = tctx(ctx)
+    assert len(result["messages"]) == 1
+    assert "Break down" in result["messages"][0]["content"][0]["text"]
+    assert state.last_advice == ""  # consumed
+
+    # should_stop should return False (no remediation, no wrapup)
+    sstop = behavior_should_stop(state)
+    assert sstop({}) is False
+
+
+def test_full_hook_pipeline_remediation_flow():
+    """Bad completion_report → transform_context injects feedback → should_stop continues."""
+    from senza_agent.behavior.state import AgentState
+
+    state = AgentState()
+    state.completion_report = {
+        "outcome": "done",
+        "evidence_type": "artifact",
+        "evidence": ["/nonexistent/artifact.py"],
+    }
+
+    tctx = behavior_transform_context(state)
+    ctx = {
+        "system_prompt": "test",
+        "messages": [],
+        "turn_index": 5,
+        "run_id": "test",
+        "started_at": "2025-01-01T00:00:00Z",
+    }
+    result = tctx(ctx)
+    assert len(result["messages"]) >= 1
+    assert state.needs_remediation is True
+    assert state.completion_report is None
+
+    # should_stop must return False to let the model see the feedback
+    sstop = behavior_should_stop(state)
+    assert sstop({}) is False
+    # Flag consumed
+    assert state.needs_remediation is False
+
+    # Next call to should_stop (no remediation) should return False too
+    # (no wrapup active)
+    assert sstop({}) is False
+
+
+def test_full_hook_pipeline_wrapup_termination():
+    """wrapup_turns_left=0 → should_stop returns True (no remediation)."""
+    from senza_agent.behavior.state import AgentState
+
+    state = AgentState()
+    state.wrapup_turns_left = 0
+
+    sstop = behavior_should_stop(state)
+    assert sstop({}) is True
