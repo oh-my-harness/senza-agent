@@ -416,6 +416,31 @@ class AsyncJobManager:
             out.append(entry)
         return out
 
+    # ── drain completed (for hook notification) ───────────────────────────
+
+    def drain_completed(self) -> list:
+        """Return [(job_id, output_summary)] for jobs that finished since last drain.
+
+        Each job is returned at most once. Output is truncated to 500 chars.
+        """
+        with self._global_lock:
+            jobs = list(self._jobs.values())
+        result = []
+        for job in jobs:
+            if job.status == JobStatus.RUNNING:
+                continue
+            if getattr(job, "_drained", False):
+                continue
+            job._drained = True
+            stdout = job.stdout_snapshot().strip()
+            stderr = job.stderr_snapshot().strip()
+            output = stdout
+            if stderr:
+                output += f"\n[STDERR]: {stderr}"
+            output = output[:500] if output else "(no output)"
+            result.append((job.job_id, output))
+        return result
+
     # ── cleanup ──────────────────────────────────────────────────────────────
 
     def cleanup(self, max_age_secs: int = 300) -> int:
