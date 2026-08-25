@@ -407,22 +407,6 @@ def should_trigger_advisor(state: "AgentState", config: "BehaviorConfig") -> boo
     return False
 
 
-# ── Injection ────────────────────────────────────────────────────────────────
-
-
-def inject_advisor_advice(state: "AgentState", harness: object) -> None:
-    """Inject the latest advice into the main agent via ``harness.steer()``.
-
-    ``harness`` is a Senza ``AgentHarness``. Failures are silently swallowed.
-    """
-    advice = (getattr(state, "last_advice", "") or "").strip()
-    if not advice:
-        return
-    try:
-        harness.steer(advice)  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
 
 # ── after_turn hook factory ──────────────────────────────────────────────────
 
@@ -445,9 +429,8 @@ def advisor_after_turn(state: "AgentState", config: "BehaviorConfig") -> Callabl
                 run_advisor(state, config)
                 # Consume a one-shot request after firing.
                 state.advisor_requested = False
-                harness = ctx.get("harness") if isinstance(ctx, dict) else None
-                if harness is not None:
-                    inject_advisor_advice(state, harness)
+                # Advice is stored in state.last_advice; the transform_context
+                # hook (context_injector) will inject it into the next LLM call.
         except Exception:
             # The after_turn hook must never break the main loop.
             pass

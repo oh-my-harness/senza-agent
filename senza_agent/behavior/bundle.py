@@ -12,15 +12,13 @@ class BehaviorBundle:
     """Assembles all behavior mechanisms into a single bundle for agent.py."""
 
     def __init__(self, state: "AgentState", config: "BehaviorConfig") -> None:
-        # Lazy imports: acceptance_gate, advisor, and wrapup modules are created
-        # by later tasks. Importing them here (inside __init__) avoids circular
-        # import errors and keeps this skeleton importable.
         from senza_agent.behavior.acceptance_gate import (
             acceptance_gate_tools,
             acceptance_validator,
         )
         from senza_agent.behavior.advisor import advisor_runner
-        from senza_agent.behavior.wrapup import wrapup_stop, wrapup_window
+        from senza_agent.behavior.context_injector import behavior_transform_context
+        from senza_agent.behavior.wrapup import behavior_should_stop, wrapup_window
 
         import senza
 
@@ -29,9 +27,10 @@ class BehaviorBundle:
         self.tools = acceptance_gate_tools(state)
         self.hooks = [
             senza.hooks.after_turn(advisor_runner(state, config)),
+            senza.hooks.transform_context(behavior_transform_context(state)),
             senza.hooks.prepare_next_turn(wrapup_window(state, config)),
         ]
         self.validator = senza.hooks.final_answer_validator(
             acceptance_validator(state)
         )
-        self.should_stop = senza.hooks.should_stop(wrapup_stop(state))
+        self.should_stop = senza.hooks.should_stop(behavior_should_stop(state))

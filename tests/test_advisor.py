@@ -9,7 +9,6 @@ from senza_agent.behavior.advisor import (
     _extract_user_injections,
     advisor_after_turn,
     ensure_progress_log,
-    inject_advisor_advice,
     run_advisor,
     should_trigger_advisor,
 )
@@ -144,45 +143,6 @@ def test_run_advisor_catches_llm_exception(tmp_path, monkeypatch):
     log_path = tmp_path / "advisor_log.jsonl"
     assert log_path.is_file()
 
-
-# ── inject_advisor_advice ────────────────────────────────────────────────────
-
-
-def test_inject_advisor_advice_calls_steer():
-    state = AgentState()
-    state.last_advice = "focus on tests first"
-
-    calls: list[str] = []
-
-    class FakeHarness:
-        def steer(self, text: str) -> None:
-            calls.append(text)
-
-    inject_advisor_advice(state, FakeHarness())
-    assert calls == ["focus on tests first"]
-
-
-def test_inject_advisor_advice_noop_when_empty():
-    state = AgentState()
-    state.last_advice = ""
-
-    class FakeHarness:
-        def steer(self, text: str) -> None:
-            raise AssertionError("steer should not be called with empty advice")
-
-    inject_advisor_advice(state, FakeHarness())  # must not raise
-
-
-def test_inject_advisor_advice_swallows_errors():
-    state = AgentState()
-    state.last_advice = "something"
-
-    class FakeHarness:
-        def steer(self, text: str) -> None:
-            raise RuntimeError("harness down")
-
-    # Must not raise.
-    inject_advisor_advice(state, FakeHarness())
 
 
 # ── ensure_progress_log ──────────────────────────────────────────────────────

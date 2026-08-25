@@ -234,3 +234,25 @@ def test_should_stop_remediation_takes_priority_over_wrapup():
     # Remediation wins: continue so the model can fix things
     assert hook({}) is False
     assert state.needs_remediation is False
+
+from senza_agent.config import BehaviorConfig
+from senza_agent.behavior.bundle import BehaviorBundle
+
+
+def test_bundle_registers_transform_context_hook():
+    """BehaviorBundle.hooks must include a transform_context hook."""
+    state = AgentState()
+    config = BehaviorConfig()
+    bundle = BehaviorBundle(state, config)
+    # hooks is a list of senza.hooks.Hook — we can't inspect the kind
+    # directly, but we can check that the list is non-empty and includes
+    # more than just after_turn + prepare_next_turn (which was 2 before)
+    assert len(bundle.hooks) >= 3
+
+
+def test_bundle_uses_behavior_should_stop():
+    """BehaviorBundle.should_stop must be set (to the combined hook)."""
+    state = AgentState()
+    config = BehaviorConfig()
+    bundle = BehaviorBundle(state, config)
+    assert bundle.should_stop is not None
