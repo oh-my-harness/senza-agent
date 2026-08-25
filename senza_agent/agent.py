@@ -158,16 +158,9 @@ def create_agent(config: Config) -> Any:
     try:
         from senza_agent.tools.registry import get_standard_tools
         standard_tools = get_standard_tools()
-        # Collect names already registered by behavior bundle to avoid duplicates.
-        existing_names = set()
-        if hasattr(behavior, "tools") and behavior.tools:
-            for bt in behavior.tools:
-                n = bt.name if isinstance(bt.name, str) else getattr(bt, "name", lambda: "?")()
-                existing_names.add(n)
-        standard_tools = [t for t in standard_tools if (t.name if isinstance(t.name, str) else t.name()) not in existing_names]
         if standard_tools:
             builder = builder.tools(standard_tools)
-            state.tools = [t.name if isinstance(t.name, str) else t.name() for t in standard_tools]
+            state.tools = [t.name for t in standard_tools]
     except Exception as e:
         print(f"Warning: failed to load standard tools: {e}", file=sys.stderr)
     # ── Graph tools (plan_create/revise/abandon) ────────────────────────
@@ -176,6 +169,7 @@ def create_agent(config: Config) -> Any:
         graph_tools = get_graph_tools()
         if graph_tools:
             builder = builder.tools(graph_tools)
+            state.tools.extend(t.name for t in graph_tools)
     except Exception as e:
         print(f"Warning: failed to load graph tools: {e}", file=sys.stderr)
 
