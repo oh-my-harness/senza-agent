@@ -370,10 +370,18 @@ def tool_analyze_content(
 
         api_key = os.environ.get("SENZA_AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         base_url = os.environ.get("SENZA_AGENT_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+        model = os.environ.get("SENZA_AGENT_MODEL") or os.environ.get("LLM_MODEL", "")
         if not api_key:
             return _err("no API key configured (SENZA_AGENT_API_KEY or OPENAI_API_KEY)")
+        if not model:
+            return _err("no model configured (SENZA_AGENT_MODEL or LLM_MODEL)")
         provider = senza.providers.openai(api_key=api_key, base_url=base_url or None)
-        result_text = provider.chat(user_msg)
+        harness = (
+            senza.HarnessBuilder(model)
+            .provider("*", provider)
+            .build()
+        )
+        result_text = harness.chat(user_msg)
     except Exception as e:
         return _err(f"LLM call failed: {e}")
 
@@ -465,7 +473,12 @@ def tool_consult_advisor(
         import senza
 
         provider = senza.providers.openai(api_key=api_key or "local", base_url=base_url)
-        text = provider.chat(question)
+        harness = (
+            senza.HarnessBuilder(use_model)
+            .provider("*", provider)
+            .build()
+        )
+        text = harness.chat(question)
         return _ok(text)
     except Exception as e:
         return _err(str(e))
