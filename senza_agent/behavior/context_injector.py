@@ -40,12 +40,29 @@ def behavior_transform_context(state: "AgentState") -> Callable[[dict], dict]:
         messages = list(ctx.get("messages") or [])
         injected = False
 
-        # 1. Advisor advice (highest priority — strategic guidance)
+        # 1a. Advisor advice (highest priority — strategic guidance)
         advice = (getattr(state, "last_advice", "") or "").strip()
         if advice:
             messages.append(_make_user_message(f"[advisor] {advice}"))
             state.last_advice = ""
             injected = True
+
+        # 1b. Graph stall detection
+        try:
+            from senza_agent.tools.graph_tools import get_graph
+            graph = get_graph()
+            if graph is not None and graph.status == "active":
+                graph.expire_if_out_of_time()
+                level, reason = graph.stall_level()
+                if level >= 1:
+                    hint = graph.stall_hint()
+                    messages.append(_make_user_message(
+                        f"[graph] Convergence stall detected (level {level}, {reason}): {hint}"
+                    ))
+                    state.advisor_requested = True
+                    injected = True
+        except Exception:
+            pass
 
         # 2. General-purpose pending injections (bg tasks, watchers, etc.)
         pending = getattr(state, "pending_injections", None)

@@ -57,3 +57,45 @@ def test_transform_context_injects_pending_injections():
     assert "[bg]" in result["messages"][0]["content"][0]["text"]
     assert "[env]" in result["messages"][1]["content"][0]["text"]
     assert state.pending_injections == []
+
+from senza_agent.behavior.graph import ExecutionGraph
+from senza_agent.tools import graph_tools
+
+
+def _simple_node(node_id="n1", title="Step 1", goal="Do thing"):
+    return {"id": node_id, "title": title, "goal": goal}
+
+
+def test_transform_context_no_graph_no_injection():
+    """No active graph → no graph-related injection."""
+    graph_tools.set_graph(None)
+    state = AgentState()
+    hook = behavior_transform_context(state)
+    ctx = _make_ctx([])
+    result = hook(ctx)
+    assert result["messages"] == []
+
+
+def test_transform_context_graph_stall_injects_hint():
+    """When stall_level >= 1, inject stall_hint and set advisor_requested."""
+    graph_tools.set_graph(None)  # clean slate
+    g = ExecutionGraph("test", [_simple_node()], [])
+    # Force stall: enter and exit node many times to bump revisits
+    for i in range(5):
+        g.graph_op("enter", node="n1")
+        g.graph_op("exit", node="n1", summary=f"attempt {i+1}")
+    graph_tools.set_graph(g)
+
+    state = AgentState()
+    hook = behavior_transform_context(state)
+    ctx = _make_ctx([])
+    result = hook(ctx)
+
+    # Should have injected at least one graph-related message
+    assert len(result["messages"]) >= 1
+    graph_msg = result["messages"][0]["content"][0]["text"]
+    assert "graph" in graph_msg.lower() or "stall" in graph_msg.lower() or "revisit" in graph_msg.lower()
+    # Advisor should be requested
+    assert state.advisor_requested is True
+
+    graph_tools.set_graph(None)  # cleanup
