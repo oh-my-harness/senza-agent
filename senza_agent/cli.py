@@ -460,6 +460,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--web", metavar="PORT", type=int, nargs="?", const=8090, default=None,
         help="Launch the web dashboard on the given port (default 8090)",
     )
+    parser.add_argument(
+        "--spawn", action="store_true", default=None,
+        help="Enable sub-agent spawning (spawn_agent tool)",
+    )
+    parser.add_argument(
+        "--provider-type", default=None,
+        choices=["openai", "anthropic"],
+        help="LLM provider type (default: openai)",
+    )
     return parser
 
 
@@ -660,8 +669,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{RED}[senza-agent] config load failed: {e}{RESET}")
         config = None
 
-    # 8. Override model if -m given.
+    # 8. Apply CLI overrides to config.
     model_override = args.model
+    if args.spawn:
+        config.spawn_enabled = True
+    if args.provider_type:
+        config.provider_type = args.provider_type
 
     # 9. Create agent (lazy import — may fail during early development).
     harness = None

@@ -354,7 +354,7 @@ watch_register(name="mysql-err",  path="./watchers/tail_grep.py", interval=30,
 | `watch_update(name, ...)` | 修改字段 |
 | `watch_unregister(name)` | 彻底注销（代码文件不删） |
 
-注册表持久化在 `<cwd>/.qevos/watchers.json`，跨 run 持久。可直接用 `read_file` 查当前完整状态（含每个 watcher 的 `store` 持久状态）。
+注册表持久化在 `<cwd>/.senza-agent/watchers.json`，跨 run 持久。可直接用 `read_file` 查当前完整状态（含每个 watcher 的 `store` 持久状态）。
 
 ### 何时该用 watcher 而非工具调用
 
