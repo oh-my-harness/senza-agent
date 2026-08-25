@@ -126,20 +126,6 @@ def get_standard_tools() -> list:
 
     # ── Completion / Advisor ────────────────────────────────────────────────
     tools.append(senza.create_tool(
-        name="submit_completion_report",
-        description="Submit a structured completion report for the acceptance gate before calling done.",
-        parameters=_mixed_schema({
-            "goal_understanding": {"type": "string", "description": "Your understanding of the task goal"},
-            "completed_work": {"type": "array", "description": "List of completed items"},
-            "remaining_gaps": {"type": "array", "description": "List of remaining/incomplete items"},
-            "evidence_type": {"type": "string", "description": "artifact | tool_result | observation | none"},
-            "evidence": {"type": "array", "description": "List of evidence (file paths or descriptions)"},
-            "outcome": {"type": "string", "description": "done | done_partial | done_blocked (default done)"},
-            "confidence": {"type": "string", "description": "low | medium | high (default medium)"},
-        }, ["goal_understanding", "completed_work", "remaining_gaps", "evidence_type", "evidence"]),
-        callback=standard.tool_submit_completion_report,
-    ))
-    tools.append(senza.create_tool(
         name="request_advisor",
         description="Actively request the senior advisor to intervene immediately after this turn for an independent strategic review.",
         parameters=_str_schema({"reason": "(optional) reason for requesting guidance"}),
