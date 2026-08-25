@@ -15,6 +15,10 @@ class AgentState:
     wrapup_turns_left: int | None = None
     goal: str = ""
     advisor_requested: bool = False
+    episodic_required: bool = False
+    concept_required: bool = False
+    needs_remediation: bool = False
+    pending_injections: list = field(default_factory=list)
     meta: dict = field(default_factory=dict)
     run_dir: str = ""
     tools: list = field(default_factory=list)
