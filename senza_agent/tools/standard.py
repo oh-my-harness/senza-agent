@@ -50,7 +50,6 @@ class _StateRef:
     interrupt_handler: Any = None
     vision_supported: Optional[bool] = None
     bad_image_urls: dict = {}
-    yield_waiting_job: Optional[dict] = None
 
 
 _state = _StateRef()
@@ -932,17 +931,6 @@ def tool_jobs_list() -> dict:
         return _ok("(no background jobs)")
     return _ok(jobs)
 
-
-def tool_wait_for_job(job_id: str = "", check_interval: int = 15) -> dict:
-    """Enter lightweight wait mode until the specified background job completes."""
-    if not job_id:
-        return _err("job_id must not be empty")
-    mgr = _async_mod.get_manager()
-    jobs = {j["job_id"] for j in mgr.list_jobs()}
-    if job_id not in jobs:
-        return _err(f"job {job_id} not found; start it with shell_bg first")
-    _state.yield_waiting_job = {"job_id": job_id, "interval": max(5, int(check_interval))}
-    return _ok({"message": f"entered wait mode, will check {job_id} every {check_interval}s", "job_id": job_id})
 
 
 # ── Environment watchers ────────────────────────────────────────────────────

@@ -295,15 +295,6 @@ def get_standard_tools() -> list:
         parameters=_str_schema({}),
         callback=standard.tool_jobs_list,
     ))
-    tools.append(senza.create_tool(
-        name="wait_for_job",
-        description="Enter lightweight wait mode until the specified background job completes.",
-        parameters=_mixed_schema({
-            "job_id": {"type": "string", "description": "Job ID from shell_bg"},
-            "check_interval": {"type": "integer", "description": "(optional) check interval seconds, default 15"},
-        }, ["job_id"]),
-        callback=standard.tool_wait_for_job,
-    ))
 
     # ── Environment watchers ────────────────────────────────────────────────
     tools.append(senza.create_tool(
