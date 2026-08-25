@@ -34,6 +34,24 @@ class BehaviorConfig:
 
 
 @dataclass
+class CompactionConfig:
+    """Deep compression (auto-compaction) tuning parameters.
+
+    All fields default to None, meaning the runtime's built-in defaults
+    (context_window=200_000, reserve_tokens=16_384, keep_recent=20_000)
+    are used.
+    """
+
+    context_window: Optional[int] = None
+    max_tokens: Optional[int] = None
+    reserve_tokens: Optional[int] = None
+    keep_recent_tokens: Optional[int] = None
+    model: Optional[str] = None
+    model_context_window: Optional[int] = None
+    model_max_tokens: Optional[int] = None
+
+
+@dataclass
 class Config:
     """Top-level senza-agent configuration."""
 
@@ -48,8 +66,10 @@ class Config:
     memory_enabled: bool = False
     mcp_config: Optional[str] = None
     spawn_enabled: bool = False
+    provider_type: str = "openai"
     web: WebConfig = field(default_factory=WebConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
 
 
 def _home() -> Path:
@@ -98,6 +118,26 @@ def _apply_file(cfg: Config, data: dict[str, Any]) -> None:
         cfg.mcp_config = data["mcp_config"]
     if "spawn_enabled" in data:
         cfg.spawn_enabled = bool(data["spawn_enabled"])
+    if "provider_type" in data:
+        cfg.provider_type = str(data["provider_type"])
+
+    compaction_data = data.get("compaction")
+    if isinstance(compaction_data, dict):
+        c = cfg.compaction
+        if "context_window" in compaction_data:
+            c.context_window = compaction_data["context_window"]
+        if "max_tokens" in compaction_data:
+            c.max_tokens = compaction_data["max_tokens"]
+        if "reserve_tokens" in compaction_data:
+            c.reserve_tokens = compaction_data["reserve_tokens"]
+        if "keep_recent_tokens" in compaction_data:
+            c.keep_recent_tokens = compaction_data["keep_recent_tokens"]
+        if "model" in compaction_data:
+            c.model = compaction_data["model"]
+        if "model_context_window" in compaction_data:
+            c.model_context_window = compaction_data["model_context_window"]
+        if "model_max_tokens" in compaction_data:
+            c.model_max_tokens = compaction_data["model_max_tokens"]
 
     web_data = data.get("web")
     if isinstance(web_data, dict):
@@ -153,6 +193,14 @@ def _apply_env(cfg: Config) -> None:
     if env_working_dir:
         cfg.working_dir = env_working_dir
 
+    env_provider_type = os.environ.get("SENZA_AGENT_PROVIDER_TYPE")
+    if env_provider_type:
+        cfg.provider_type = env_provider_type
+
+    env_spawn = os.environ.get("SENZA_AGENT_SPAWN_ENABLED")
+    if env_spawn:
+        cfg.spawn_enabled = env_spawn.lower() in ("1", "true", "yes")
+
 
 def _apply_derived(cfg: Config) -> None:
     """Fill in derived paths if not already set."""
@@ -180,3 +228,29 @@ def load_config() -> Config:
     _apply_env(cfg)
     _apply_derived(cfg)
     return cfg
+
+
+def create_provider(cfg: Config):
+    """Create a Senza LLM Provider from the given config.
+
+    Supports ``openai`` (default) and ``anthropic`` provider types.
+    The provider type can be set via ``config.provider_type`` or the
+    ``SENZA_AGENT_PROVIDER_TYPE`` env var.
+
+    Returns a ``senza.Provider`` instance.
+    """
+    import senza
+
+    api_key = cfg.api_key or os.environ.get("OPENAI_API_KEY", "")
+    api_base = cfg.api_base or os.environ.get("OPENAI_API_BASE", "")
+
+    if cfg.provider_type == "anthropic":
+        return senza.providers.anthropic(
+            api_key=api_key,
+            base_url=api_base if api_base else None,
+        )
+    # default: openai-compatible
+    return senza.providers.openai(
+        api_key=api_key,
+        base_url=api_base if api_base else None,
+    )

@@ -208,15 +208,30 @@ def tool_scratchpad_append(content: str = "") -> dict:
     return _ok(f"scratchpad appended ({len(cur)} chars)")
 
 
-# ── Recall history (stub — needs session history access) ────────────────────
+# ── Recall history ──────────────────────────────────────────────────────────
 
 
 def tool_recall_history(last_n: int = 12, query: str = "", seg: int = -1) -> dict:
-    """Recall archived raw execution records (stub: session history not directly accessible)."""
+    """Recall archived raw execution records.
+
+    Session history recall is handled automatically by the ``history_recall_plugin``
+    installed in the harness. The plugin injects relevant past context into the
+    LLM based on the current conversation — no explicit tool query is needed.
+
+    If the plugin is not configured (no ``sessions_dir``), this tool returns
+    a notice explaining how to enable it.
+    """
+    sessions_dir = os.environ.get("SENZA_AGENT_SESSIONS_DIR", "")
+    if not sessions_dir:
+        return _ok(
+            "Session history recall is not configured. "
+            "Set sessions_dir in config or SENZA_AGENT_SESSIONS_DIR env to enable "
+            "automatic historical context injection via the history_recall_plugin."
+        )
     return _ok(
-        "recall_history is not available in this runtime — "
-        "session history is managed by the Senza harness and not directly accessible. "
-        "Use scratchpad_get or remember for working memory."
+        "Session history recall is active via the history_recall plugin. "
+        "Relevant past context is automatically injected into your context — "
+        "no manual query needed. Use scratchpad_get or remember for working memory."
     )
 
 
@@ -365,8 +380,8 @@ def tool_analyze_content(
     )
 
     try:
+        from senza_agent.config import Config, create_provider
         import senza
-
         api_key = os.environ.get("SENZA_AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         base_url = os.environ.get("SENZA_AGENT_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         model = os.environ.get("SENZA_AGENT_MODEL") or os.environ.get("LLM_MODEL", "")
@@ -374,7 +389,10 @@ def tool_analyze_content(
             return _err("no API key configured (SENZA_AGENT_API_KEY or OPENAI_API_KEY)")
         if not model:
             return _err("no model configured (SENZA_AGENT_MODEL or LLM_MODEL)")
-        provider = senza.providers.openai(api_key=api_key, base_url=base_url or None)
+        provider = create_provider(Config(
+            model=model, api_key=api_key, api_base=base_url or "",
+            provider_type=os.environ.get("SENZA_AGENT_PROVIDER_TYPE", "openai"),
+        ))
         harness = (
             senza.HarnessBuilder(model)
             .provider("*", provider)
@@ -469,9 +487,13 @@ def tool_consult_advisor(
 
     use_model = model or cfg_model
     try:
+        from senza_agent.config import Config, create_provider
         import senza
 
-        provider = senza.providers.openai(api_key=api_key or "local", base_url=base_url)
+        provider = create_provider(Config(
+            model=use_model, api_key=api_key or "local", api_base=base_url,
+            provider_type=os.environ.get("SENZA_AGENT_PROVIDER_TYPE", "openai"),
+        ))
         harness = (
             senza.HarnessBuilder(use_model)
             .provider("*", provider)

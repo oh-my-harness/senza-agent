@@ -306,7 +306,10 @@ def run_advisor(state: "AgentState", config: "BehaviorConfig") -> None:
             _log_advisor_call(state, "periodic", context, None, "failed", system=advisor_system)
             return
 
-        provider = senza.providers.openai(api_key=api_key, base_url=api_base or None)
+        from senza_agent.config import create_provider
+        advisor_cfg = type(config)(model=model, api_key=api_key, api_base=api_base,
+                                   provider_type=getattr(config, "provider_type", "openai"))
+        provider = create_provider(advisor_cfg)
         harness = (
             senza.HarnessBuilder(model)
             .provider("*", provider)

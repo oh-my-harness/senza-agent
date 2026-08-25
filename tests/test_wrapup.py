@@ -12,14 +12,18 @@ def test_not_triggered_under_budget():
     result = wrapup_window(state, config)({"usage": {"total_cost": 1.0}})
     assert result is None
     assert state.wrapup_turns_left is None
+    assert state.pending_injections == []
 
 
 def test_triggered_on_budget_exhaustion():
     state = AgentState()
     config = BehaviorConfig(budget_limit=10.0, wrapup_turns=2)
     result = wrapup_window(state, config)({"usage": {"total_cost": 11.0}})
-    assert result is not None
+    assert result is None  # hook returns None; reminder goes to pending_injections
     assert state.wrapup_turns_left == 2
+    assert len(state.pending_injections) == 1
+    assert "wrap-up window" in state.pending_injections[0]
+    assert "2 turn" in state.pending_injections[0]
 
 
 def test_decrements_turns():
@@ -28,6 +32,17 @@ def test_decrements_turns():
     config = BehaviorConfig(budget_limit=10.0, wrapup_turns=2)
     wrapup_window(state, config)({"usage": {"total_cost": 11.0}})
     assert state.wrapup_turns_left == 1
+    assert len(state.pending_injections) == 1
+    assert "1 turn" in state.pending_injections[0]
+
+
+def test_no_reminder_on_last_turn():
+    state = AgentState()
+    state.wrapup_turns_left = 1
+    config = BehaviorConfig(budget_limit=10.0, wrapup_turns=2)
+    wrapup_window(state, config)({"usage": {"total_cost": 11.0}})
+    assert state.wrapup_turns_left == 0
+    assert state.pending_injections == []  # no reminder on last turn
 
 
 def test_stop_when_exhausted():

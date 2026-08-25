@@ -8,7 +8,7 @@ These tools call the senza-agent web server (port 8090) over HTTP to provide:
 - ``file_tab`` — manage file browser tabs
 - ``register_app`` / ``list_apps`` / ``run_app`` — user-space apps
 
-All tools return ``{"success": bool, "output": ..., "error": ...}`` dicts,
+All tools return ``{"status": "ok"|"error", "output": ..., "error": ...}`` dicts,
 matching the convention used by ``senza_agent.tools.standard``.
 
 The web server port defaults to 8090 and can be overridden via the
@@ -67,15 +67,17 @@ def _api(
 
 
 def _ok(output: Any = None, **extra) -> dict[str, Any]:
-    """Build a success result."""
-    result = {"success": True, "output": output}
+    """Build a success result matching standard.py contract."""
+    result = {"status": "ok"}
+    if output is not None or not extra:
+        result["output"] = output
     result.update(extra)
     return result
 
 
 def _err(error: str, **extra) -> dict[str, Any]:
-    """Build an error result."""
-    result = {"success": False, "output": None, "error": error}
+    """Build an error result matching standard.py contract."""
+    result = {"status": "error", "error": error}
     result.update(extra)
     return result
 

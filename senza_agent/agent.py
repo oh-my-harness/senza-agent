@@ -82,12 +82,8 @@ def create_agent(config: Config) -> Any:
     behavior = BehaviorBundle(state, config.behavior)
 
     # ── Provider ────────────────────────────────────────────────────────
-    api_key = config.api_key or os.environ.get("OPENAI_API_KEY", "")
-    api_base = config.api_base or os.environ.get("OPENAI_API_BASE", "")
-    provider = senza.providers.openai(
-        api_key=api_key,
-        base_url=api_base if api_base else None,
-    )
+    from senza_agent.config import create_provider
+    provider = create_provider(config)
 
     # ── Execution environment ───────────────────────────────────────────
     working_dir = config.working_dir or os.getcwd()
@@ -128,7 +124,19 @@ def create_agent(config: Config) -> Any:
         .retry(3, 1000)
     )
 
-    # ── Session persistence ─────────────────────────────────────────────
+    # ── Compaction tuning ──────────────────────────────────────────────
+    cp = config.compaction
+    if cp.context_window and cp.max_tokens:
+        builder = builder.model_info(cp.context_window, cp.max_tokens)
+    if cp.reserve_tokens is not None:
+        builder = builder.compaction_reserve_tokens(cp.reserve_tokens)
+    if cp.keep_recent_tokens is not None:
+        builder = builder.compaction_keep_recent_tokens(cp.keep_recent_tokens)
+    if cp.model and cp.model_context_window and cp.model_max_tokens:
+        builder = builder.compaction_model(
+            cp.model, cp.model_context_window, cp.model_max_tokens
+        )
+
     if config.sessions_dir:
         try:
             builder = builder.session_repo(
@@ -189,8 +197,31 @@ def create_agent(config: Config) -> Any:
         try:
             source = senza.knowledge.local_source(config.knowledge_dir, "local")
             builder = builder.plugin(senza.knowledge.plugin([source]))
+
+            # Memory plugin: write-back memory from conversations
+            if config.memory_enabled:
+                store = senza.knowledge.memory_store("local")
+                policy = senza.knowledge.secure_write_policy()
+                builder = builder.plugin(
+                    senza.knowledge.memory_plugin(source, store, policy)
+                )
+                builder = builder.knowledge_access(scope="read_write")
         except Exception as e:
             print(f"Warning: knowledge plugin setup failed: {e}", file=sys.stderr)
+
+    # ── Session history recall ──────────────────────────────────────────
+    if config.sessions_dir:
+        try:
+            repo = senza.knowledge.jsonl_session_repo(config.sessions_dir)
+            index = senza.knowledge.sqlite_session_recall_index(
+                str(Path(config.sessions_dir) / "recall.db")
+            )
+            recall_source = senza.knowledge.session_recall_knowledge_source(repo, index)
+            builder = builder.plugin(
+                senza.knowledge.history_recall_plugin(recall_source)
+            )
+        except Exception as e:
+            print(f"Warning: history recall plugin setup failed: {e}", file=sys.stderr)
 
     # ── Skills ──────────────────────────────────────────────────────────
     if config.skills_dir:

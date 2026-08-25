@@ -62,21 +62,21 @@ def tool_plan_create(
     msg = f"created graph {graph.gid}「{graph.title}」 with {total} nodes"
     if graph.time_budget:
         msg += f" (budget {graph.time_budget:.0f}s)"
-    return {"status": "ok", "message": msg, "graph": graph.summary()}
+    return {"status": "ok", "output": msg, "graph": graph.summary()}
 
 
 def tool_plan_revise(ops: list[dict], reason: str = "") -> dict:
     """Apply a batch of structural operations to the current graph."""
     graph = _current_graph
     if graph is None:
-        return {"status": "error", "message": "no active graph to revise"}
+        return {"status": "error", "error": "no active graph to revise"}
     if graph.status != "active":
-        return {"status": "error", "message": f"graph is {graph.status}, not active"}
+        return {"status": "error", "error": f"graph is {graph.status}, not active"}
 
     result = graph.apply_revision(ops)
     return {
         "status": "ok" if result["fail"] == 0 else "partial",
-        "message": f"revised: {result['ok']} ok, {result['fail']} failed"
+        "output": f"revised: {result['ok']} ok, {result['fail']} failed"
                    + (f" — {reason}" if reason else ""),
         "ok": result["ok"],
         "fail": result["fail"],
@@ -90,10 +90,10 @@ def tool_plan_abandon(reason: str = "") -> dict:
     global _current_graph
     graph = _current_graph
     if graph is None:
-        return {"status": "error", "message": "no active graph to abandon"}
+        return {"status": "error", "error": "no active graph to abandon"}
 
     result = graph.abandon(reason=reason)
-    return {"status": "ok", "message": result["message"], "graph": graph.summary()}
+    return {"status": "ok", "output": result["message"], "graph": graph.summary()}
 
 
 # ── Tool factory ────────────────────────────────────────────────────────────

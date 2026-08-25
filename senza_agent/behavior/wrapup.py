@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from senza_agent.behavior.state import AgentState
     from senza_agent.config import BehaviorConfig
 
-
 def wrapup_window(
     state: "AgentState", config: "BehaviorConfig"
 ) -> Callable[[dict], Optional[dict]]:
@@ -24,6 +23,10 @@ def wrapup_window(
     - While the window is open and turns remain, decrement and emit a reminder
       (or ``None`` on the last turn, letting ``should_stop`` handle it).
     - Otherwise return ``None``.
+
+    The reminder text is written to ``state.pending_injections`` so that the
+    ``transform_context`` hook (context_injector) can inject it into the LLM
+    context.  Returning a dict from ``prepare_next_turn`` does NOT inject it.
     """
 
     def _hook(ctx: dict) -> Optional[dict]:
@@ -33,14 +36,14 @@ def wrapup_window(
         if state.wrapup_turns_left is None:
             if cost >= config.budget_limit:
                 state.wrapup_turns_left = config.wrapup_turns
-                return _reminder(state.wrapup_turns_left)
+                _emit_reminder(state, state.wrapup_turns_left)
             return None
 
         # Window open
         if state.wrapup_turns_left > 0:
             state.wrapup_turns_left -= 1
             if state.wrapup_turns_left > 0:
-                return _reminder(state.wrapup_turns_left)
+                _emit_reminder(state, state.wrapup_turns_left)
             # Reached 0 — let should_stop terminate; no reminder needed.
             return None
 
@@ -98,11 +101,18 @@ def _extract_cost(ctx: dict) -> float:
         return 0.0
 
 
-def _reminder(turns_left: int) -> dict:
-    return {
-        "text": (
-            "[wrap-up window] Budget exhausted. "
-            f"You have {turns_left} turn(s) left to wrap up. "
-            "Call submit_completion_report with any gaps, then finish."
-        )
-    }
+def _reminder_text(turns_left: int) -> str:
+    return (
+        "[wrap-up window] Budget exhausted. "
+        f"You have {turns_left} turn(s) left to wrap up. "
+        "Call submit_completion_report with any gaps, then finish."
+    )
+
+
+def _emit_reminder(state: "AgentState", turns_left: int) -> None:
+    """Append the wrap-up reminder to ``state.pending_injections``.
+
+    The ``transform_context`` hook drains ``pending_injections`` and appends
+    each entry as a user message before the next LLM call.
+    """
+    state.pending_injections.append(_reminder_text(turns_left))
