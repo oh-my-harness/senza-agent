@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any, Tuple
 
-_APP_RUNTIMES = ("python", "powershell", "shell")
+_APP_RUNTIMES = ("python", "powershell", "shell", "web")
 
 
 def _default_apps_dir() -> Path:
@@ -45,6 +45,8 @@ def parse_app_file(content: str) -> Tuple[dict[str, Any], str]:
         "runtime": "shell",
         "enabled": True,
         "timeout": 120,
+        "entry": "",
+        "sidecar": "",
     }
     body = content
 
@@ -268,3 +270,146 @@ def run_app(
             tmp.unlink()
         except OSError:
             pass
+
+
+def get_app_panel_html(app_id: str, root: str = "") -> str | None:
+    """Return the HTML for a ``runtime: web`` app panel.
+
+    Reads the app ``.md`` file, extracts the HTML body (or the ``entry`` file
+    from the project folder), and wraps it with:
+    - ``window.__QEVOS__`` config injection
+    - ``/qevos-theme.css`` stylesheet link
+    - ``/qevos-bridge.js`` script tag
+
+    Returns None if the app doesn't exist or isn't a web app.
+    """
+    apps_dir = _apps_dir()
+    fp = apps_dir / f"{app_id}.md"
+    if not fp.is_file():
+        return None
+    meta, body = parse_app_file(fp.read_text(encoding="utf-8"))
+    if meta.get("runtime") != "web":
+        return None
+
+    # If entry file is specified, read from project folder
+    entry = meta.get("entry")
+    if entry and root:
+        entry_path = Path(root) / entry
+        if entry_path.is_file():
+            body = entry_path.read_text(encoding="utf-8")
+
+    # Build the __QEVOS__ config
+    config_parts = [f'"app": {json.dumps(app_id)}']
+    if root:
+        config_parts.append(f'"root": {json.dumps(root)}')
+    qevos_config = "window.__QEVOS__ = {" + ", ".join(config_parts) + "};"
+
+    # Assemble the full HTML document
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>{qevos_config}</script>
+<link rel="stylesheet" href="/qevos-theme.css">
+</head>
+<body>
+{body}
+<script src="/qevos-bridge.js"></script>
+</body>
+</html>"""
+    return html
+
+
+def _app_data_dir(app_id: str, root: str = "") -> Path:
+    """Return the data directory for an app.
+
+    If ``root`` is set, files are scoped to that project folder.
+    Otherwise, files go to ``~/.senza-agent/app-data/<app_id>/``.
+    """
+    if root:
+        return Path(root)
+    return Path.home() / ".senza-agent" / "app-data" / app_id
+
+
+def read_app_file(app_id: str, rel_path: str, root: str = "") -> dict[str, Any]:
+    """Read a file from an app's data directory."""
+    base = _app_data_dir(app_id, root)
+    fp = (base / rel_path).resolve()
+    # Prevent path traversal
+    if not str(fp).startswith(str(base.resolve())):
+        return {"error": "path traversal denied"}
+    if not fp.is_file():
+        return {"error": "not found", "exists": False}
+    try:
+        content = fp.read_text(encoding="utf-8")
+        return {"content": content, "exists": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def read_app_file_binary(app_id: str, rel_path: str, root: str = "") -> bytes | None:
+    """Read a file as raw bytes from an app's data directory."""
+    base = _app_data_dir(app_id, root)
+    fp = (base / rel_path).resolve()
+    if not str(fp).startswith(str(base.resolve())):
+        return None
+    if not fp.is_file():
+        return None
+    return fp.read_bytes()
+
+
+def write_app_file(app_id: str, rel_path: str, content: str = "", content_b64: str = "", root: str = "") -> dict[str, Any]:
+    """Write a file to an app's data directory."""
+    base = _app_data_dir(app_id, root)
+    fp = (base / rel_path).resolve()
+    if not str(fp).startswith(str(base.resolve())):
+        return {"error": "path traversal denied"}
+    try:
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        if content_b64:
+            import base64
+            fp.write_bytes(base64.b64decode(content_b64))
+        else:
+            fp.write_text(content, encoding="utf-8")
+        return {"ok": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def delete_app_file(app_id: str, rel_path: str, root: str = "") -> dict[str, Any]:
+    """Delete a file from an app's data directory."""
+    base = _app_data_dir(app_id, root)
+    fp = (base / rel_path).resolve()
+    if not str(fp).startswith(str(base.resolve())):
+        return {"error": "path traversal denied"}
+    if not fp.is_file():
+        return {"error": "not found"}
+    try:
+        fp.unlink()
+        return {"ok": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def list_app_files(app_id: str, dir_path: str = "", root: str = "") -> dict[str, Any]:
+    """List files in an app's data directory (recursive under dir)."""
+    base = _app_data_dir(app_id, root)
+    if dir_path:
+        search_base = (base / dir_path).resolve()
+        if not str(search_base).startswith(str(base.resolve())):
+            return {"error": "path traversal denied"}
+    else:
+        search_base = base.resolve()
+    if not search_base.is_dir():
+        return {"files": []}
+    files = []
+    for p in sorted(search_base.rglob("*")):
+        if p.is_file():
+            rel = p.relative_to(base)
+            files.append({
+                "path": str(rel),
+                "type": "file",
+                "size": p.stat().st_size,
+            })
+    return {"files": files}

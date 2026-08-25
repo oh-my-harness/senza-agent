@@ -161,6 +161,14 @@ class WebServer:
         app.router.add_post("/api/app/{app_id}", self._api_app_save)
         app.router.add_delete("/api/app/{app_id}", self._api_app_delete)
         app.router.add_post("/api/app/{app_id}/run", self._api_app_run)
+        app.router.add_get("/api/app/{app_id}/panel", self._api_app_panel)
+        # App file I/O (for runtime:web panels)
+        app.router.add_get("/api/app-file/{app_id}/{tail:.*}", self._api_app_file_get)
+        app.router.add_post("/api/app-file/{app_id}/{tail:.*}", self._api_app_file_post)
+        app.router.add_delete("/api/app-file/{app_id}/{tail:.*}", self._api_app_file_delete)
+        app.router.add_get("/api/app-files/{app_id}", self._api_app_files_list)
+        # Panel events
+        app.router.add_post("/api/panel-event", self._api_panel_event)
 
         # Static
         if _STATIC_DIR.is_dir():
@@ -544,6 +552,86 @@ class WebServer:
         if "error" in result:
             return web.json_response(result, status=500)
         return web.json_response(result)
+
+    async def _api_app_panel(self, request: web.Request) -> web.StreamResponse:
+        """Serve a runtime:web app panel HTML with __QEVOS__ bridge injected."""
+        app_id = request.match_info["app_id"]
+        root = request.query.get("root", "")
+        html = apps_mod.get_app_panel_html(app_id, root)
+        if html is None:
+            return web.Response(text="App not found or not a web app", status=404)
+        return web.Response(text=html, content_type="text/html")
+
+    async def _api_app_file_get(self, request: web.Request) -> web.Response:
+        """Read a file from an app's data directory."""
+        app_id = request.match_info["app_id"]
+        rel_path = request.match_info["tail"]
+        root = request.query.get("root", "")
+        if request.query.get("raw"):
+            data = apps_mod.read_app_file_binary(app_id, rel_path, root)
+            if data is None:
+                return web.Response(status=404)
+            return web.Response(body=data)
+        result = apps_mod.read_app_file(app_id, rel_path, root)
+        if "error" in result:
+            return web.json_response(result, status=404)
+        return web.json_response(result)
+
+    async def _api_app_file_post(self, request: web.Request) -> web.Response:
+        """Write a file to an app's data directory."""
+        app_id = request.match_info["app_id"]
+        rel_path = request.match_info["tail"]
+        root = request.query.get("root", "")
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        result = apps_mod.write_app_file(
+            app_id, rel_path,
+            content=body.get("content", ""),
+            content_b64=body.get("content_b64", ""),
+            root=root,
+        )
+        if "error" in result:
+            return web.json_response(result, status=400)
+        return web.json_response(result)
+
+    async def _api_app_file_delete(self, request: web.Request) -> web.Response:
+        """Delete a file from an app's data directory."""
+        app_id = request.match_info["app_id"]
+        rel_path = request.match_info["tail"]
+        root = request.query.get("root", "")
+        result = apps_mod.delete_app_file(app_id, rel_path, root)
+        if "error" in result:
+            return web.json_response(result, status=404)
+        return web.json_response(result)
+
+    async def _api_app_files_list(self, request: web.Request) -> web.Response:
+        """List files in an app's data directory."""
+        app_id = request.match_info["app_id"]
+        dir_path = request.query.get("dir", "")
+        root = request.query.get("root", "")
+        result = apps_mod.list_app_files(app_id, dir_path, root)
+        return web.json_response(result)
+
+    async def _api_panel_event(self, request: web.Request) -> web.Response:
+        """Receive an event from a runtime:web panel.
+
+        Events are logged but not currently forwarded to the agent.
+        This endpoint exists so panels can emit events; future agent-side
+        integration can subscribe to them.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        # Store event in state bridge for potential consumption
+        app_id = body.get("app", "")
+        event = body.get("event", "")
+        data = body.get("data", {})
+        # Log to stderr for now; future: forward to agent via state
+        print(f"[panel-event] app={app_id} event={event} data={data}", file=sys.stderr)
+        return web.json_response({"ok": True})
 
     # ══ Static ════════════════════════════════════════════════════════════
 
