@@ -59,6 +59,32 @@ def wrapup_stop(state: "AgentState") -> Callable[[dict], bool]:
     return _hook
 
 
+def behavior_should_stop(state: "AgentState") -> Callable[[dict], bool]:
+    """Return a combined ``should_stop`` hook.
+
+    Logic (checked in order):
+    1. If ``state.needs_remediation`` is True, return False (continue the
+       loop so the model sees the remediation feedback injected by
+       ``context_injector``). Consume the flag.
+    2. If ``state.wrapup_turns_left`` is not None and <= 0, return True
+       (budget exhausted, wrap-up window closed).
+    3. Otherwise return False (normal continuation).
+    """
+
+    def _hook(ctx: dict) -> bool:
+        # 1. Remediation takes priority — let the model see the feedback
+        if getattr(state, "needs_remediation", False):
+            state.needs_remediation = False
+            return False
+        # 2. Wrap-up window exhausted
+        if state.wrapup_turns_left is not None and state.wrapup_turns_left <= 0:
+            return True
+        # 3. Normal
+        return False
+
+    return _hook
+
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 

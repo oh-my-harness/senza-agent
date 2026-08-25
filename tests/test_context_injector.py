@@ -196,3 +196,41 @@ def test_transform_context_no_remediation_when_report_passes():
     result = hook(ctx)
     assert result["messages"] == []
     assert state.needs_remediation is False
+
+from senza_agent.behavior.wrapup import behavior_should_stop
+
+
+def test_should_stop_continues_when_remediation_pending():
+    """needs_remediation=True → should_stop returns False (continue loop)."""
+    state = AgentState()
+    state.needs_remediation = True
+    hook = behavior_should_stop(state)
+    assert hook({}) is False
+    # Flag is consumed after one check
+    assert state.needs_remediation is False
+
+
+def test_should_stop_stops_when_wrapup_exhausted():
+    """wrapup_turns_left <= 0 → should_stop returns True."""
+    state = AgentState()
+    state.wrapup_turns_left = 0
+    hook = behavior_should_stop(state)
+    assert hook({}) is True
+
+
+def test_should_stop_default_does_not_stop():
+    """No remediation, no wrapup → should_stop returns False."""
+    state = AgentState()
+    hook = behavior_should_stop(state)
+    assert hook({}) is False
+
+
+def test_should_stop_remediation_takes_priority_over_wrapup():
+    """needs_remediation=True overrides wrapup stop."""
+    state = AgentState()
+    state.needs_remediation = True
+    state.wrapup_turns_left = 0
+    hook = behavior_should_stop(state)
+    # Remediation wins: continue so the model can fix things
+    assert hook({}) is False
+    assert state.needs_remediation is False
