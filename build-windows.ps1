@@ -107,49 +107,42 @@ if ($SkipClone) {
 $DesktopDir = Join-Path $RepoDir "desktop"
 Write-Step "Installing npm dependencies (this may take a few minutes) ..."
 
-# Temporarily relax error preference: npm/electron-builder write progress
-# and warnings to stderr, which PowerShell treats as fatal under Stop mode.
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
+# Start-Process runs npm as a separate process — output streams directly
+# to the console in real time, and PowerShell never wraps stderr into
+# NativeCommandError (the PS 5.1 trap that breaks under Stop mode).
 
 Push-Location $DesktopDir
 try {
-    if (Test-Path "package-lock.json") {
-        npm ci 2>&1 | Out-Host
-    } else {
+    $npmArgs = if (Test-Path "package-lock.json") { "ci" } else { "install" }
+    if (-not (Test-Path "package-lock.json")) {
         Write-Warn "package-lock.json not found, using npm install"
-        npm install 2>&1 | Out-Host
     }
-    if ($LASTEXITCODE -ne 0) {
-        $ErrorActionPreference = $prevEAP
-        Write-Err "npm install failed (exit $LASTEXITCODE)."
+    $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npm $npmArgs" `
+        -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
+    if ($proc.ExitCode -ne 0) {
+        Write-Err "npm install failed (exit $($proc.ExitCode))."
         Write-Host "    Try: cd $DesktopDir; npm install"
         exit 1
     }
     Write-OK "Dependencies installed"
 } finally {
     Pop-Location
-    $ErrorActionPreference = $prevEAP
 }
 
 # ── 4. Build installers ──────────────────────────────────────────────
 Write-Step "Building NSIS + MSI installers (electron-builder) ..."
 
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-
 Push-Location $DesktopDir
 try {
-    npm run build:win 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        $ErrorActionPreference = $prevEAP
-        Write-Err "Build failed (exit $LASTEXITCODE)."
+    $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npm run build:win" `
+        -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
+    if ($proc.ExitCode -ne 0) {
+        Write-Err "Build failed (exit $($proc.ExitCode))."
         exit 1
     }
     Write-OK "Build completed"
 } finally {
     Pop-Location
-    $ErrorActionPreference = $prevEAP
 }
 
 # ── 5. Show results ──────────────────────────────────────────────────
