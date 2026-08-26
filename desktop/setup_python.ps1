@@ -60,16 +60,23 @@ and re-run this script, or re-launch SenzaAgent after installing Python.
 }
 
 Write-Host "Using Python: $PythonExe"
-$versionOutput = & $PythonExe.Replace(' ','') --version 2>&1
-if ($PythonExe -match '^py ') {
-    $versionOutput = & py --version 2>&1
+
+# Get version: handle "py -3.x" (two tokens) vs "python" (one token)
+if ($PythonExe -match '^py -(\S+)') {
+    $versionOutput = & py "-$($Matches[1])" --version 2>&1
+} else {
+    $versionOutput = & $PythonExe --version 2>&1
 }
 Write-Host "Python version: $versionOutput"
 
 # ── 2. Create venv if it doesn't exist ───────────────────────────────────
 if (-not (Test-Path $VenvPython)) {
     Write-Host "Creating virtual environment at $VenvDir ..." -ForegroundColor Yellow
-    & $PythonExe.Replace(' ','') -m venv $VenvDir
+    if ($PythonExe -match '^py -(\S+)') {
+        & py "-$($Matches[1])" -m venv $VenvDir
+    } else {
+        & $PythonExe -m venv $VenvDir
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] Failed to create virtual environment." -ForegroundColor Red
         exit 1

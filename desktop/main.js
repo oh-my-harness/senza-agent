@@ -116,7 +116,17 @@ function findPythonCmd() {
   return sysBin;
 }
 
-// ── First-run venv setup (fallback for MSI or if installer script failed) ──
+// ── First-run venv setup ─────────────────────────────────────────────────
+
+let _loadingWin = null;
+
+function setLoadingMessage(msg) {
+  if (_loadingWin && !_loadingWin.isDestroyed()) {
+    _loadingWin.webContents.executeJavaScript(
+      `document.getElementById('status').textContent = ${JSON.stringify(msg)};`
+    ).catch(() => {});
+  }
+}
 
 function ensurePythonVenv() {
   if (!app.isPackaged || process.platform !== 'win32') return Promise.resolve();
@@ -124,12 +134,12 @@ function ensurePythonVenv() {
   const venvPython = path.join(INSTALL_DIR, 'python_venv', 'Scripts', 'python.exe');
   if (fs.existsSync(venvPython)) return Promise.resolve();
 
-  // MSI installer doesn't run setup_python.ps1 (NSIS-only hook).
-  // On first launch, if no venv exists, run the setup script.
   const setupScript = path.join(APP_ROOT, 'setup_python.ps1');
   if (!fs.existsSync(setupScript)) return Promise.resolve();
 
   console.log('[desktop] No Python venv found — running setup_python.ps1...');
+  setLoadingMessage('Creating Python virtual environment...');
+
   return new Promise((resolve) => {
     const proc = spawn('powershell.exe', [
       '-ExecutionPolicy', 'Bypass',
@@ -140,7 +150,14 @@ function ensurePythonVenv() {
 
     proc.stdout.on('data', (data) => {
       const text = data.toString().trim();
-      if (text) console.log('[setup]', text);
+      if (!text) return;
+      console.log('[setup]', text);
+      // Forward meaningful lines to the loading window
+      if (text.includes('Creating'))       setLoadingMessage('Creating Python virtual environment...');
+      else if (text.includes('Upgrading'))  setLoadingMessage('Upgrading pip...');
+      else if (text.includes('Installing dependencies')) setLoadingMessage('Installing Python packages...');
+      else if (text.includes('senza-agent')) setLoadingMessage('Installing senza-agent...');
+      else if (text.includes('complete'))   setLoadingMessage('Finalizing setup...');
     });
     proc.stderr.on('data', (data) => {
       const text = data.toString().trim();
@@ -152,7 +169,7 @@ function ensurePythonVenv() {
     });
     proc.on('error', (err) => {
       console.error('[setup] Failed to run setup_python.ps1:', err.message);
-      resolve(); // Don't block — the error window will show what happened.
+      resolve();
     });
   });
 }
@@ -330,14 +347,14 @@ function setupMenu() {
 
 function showLoadingWindow(message) {
   const win = new BrowserWindow({
-    width: 480, height: 200, frame: false, resizable: false,
+    width: 480, height: 220, frame: false, resizable: false,
     title: 'senza-agent', backgroundColor: '#0d1117',
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   win.loadURL('data:text/html,' + encodeURIComponent(
     `<div style="font-family:system-ui;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">` +
     `<div style="font-size:18px;font-weight:600;">SenzaAgent</div>` +
-    `<div style="font-size:14px;color:#8b949e;">${message}</div>` +
+    `<div id="status" style="font-size:14px;color:#8b949e;">${message}</div>` +
     `<div style="width:200px;height:4px;background:#21262d;border-radius:2px;overflow:hidden;">` +
     `<div style="width:40%;height:100%;background:#58a6ff;border-radius:2px;animation:pulse 1.5s ease-in-out infinite;"></div></div>` +
     `<style>@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}</style>` +
@@ -353,9 +370,8 @@ app.whenReady().then(async () => {
     ? path.join(INSTALL_DIR, 'python_venv', 'Scripts', 'python.exe')
     : '';
   const needsSetup = app.isPackaged && process.platform === 'win32' && !fs.existsSync(venvPython);
-  let loadingWin = null;
   if (needsSetup) {
-    loadingWin = showLoadingWindow('Setting up Python environment...');
+    _loadingWin = showLoadingWindow('Setting up Python environment...');
   }
 
   try {
@@ -364,13 +380,13 @@ app.whenReady().then(async () => {
     await waitForServer(agentPort, 240, 500);
   } catch (err) {
     console.error('[desktop] Failed to start agent:', err.message);
-    if (loadingWin) loadingWin.close();
+    if (_loadingWin) _loadingWin.close();
     mainWindow = new BrowserWindow({ width: 500, height: 300, title: 'senza-agent — Error' });
     mainWindow.loadURL('data:text/html,<h2 style="font-family:sans-serif;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;align-items:center;justify-content:flex-start;padding:20px;">' + err.message + '</h2>');
     return;
   }
 
-  if (loadingWin) loadingWin.close();
+  if (_loadingWin) _loadingWin.close();
   createWindow();
 
   app.on('activate', () => {
