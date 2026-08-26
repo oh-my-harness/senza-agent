@@ -641,6 +641,12 @@ def main(argv: list[str] | None = None) -> int:
     # 2 & 3. Load .env and set env defaults.
     load_dotenv_if_present()
     ensure_env_defaults()
+    # 3b. Load dashboard-saved settings (~/.senza-agent/settings.json) into env.
+    try:
+        from senza_agent.config import load_settings_into_env
+        load_settings_into_env()
+    except Exception:
+        pass
 
     # 4. Parse args.
     parser = build_parser()

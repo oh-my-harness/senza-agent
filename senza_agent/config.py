@@ -84,6 +84,11 @@ def _config_file() -> Path:
     return _config_dir() / "config.json"
 
 
+def _settings_file() -> Path:
+    """Path to the runtime settings file (key-value pairs from the dashboard)."""
+    return _config_dir() / "settings.json"
+
+
 def _load_file() -> dict[str, Any]:
     path = _config_file()
     if not path.is_file():
@@ -254,3 +259,56 @@ def create_provider(cfg: Config):
         api_key=api_key,
         base_url=api_base if api_base else None,
     )
+
+
+# ── Runtime settings file (~/.senza-agent/settings.json) ───────────────────
+
+def load_settings_into_env() -> None:
+    """Load ``~/.senza-agent/settings.json`` into ``os.environ``.
+
+    Called at startup so the dashboard-saved settings take effect without
+    a separate ``.env`` file. Existing env vars are NOT overwritten (env wins).
+    """
+    path = _settings_file()
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(data, dict):
+        return
+    for key, val in data.items():
+        if isinstance(val, str) and val and key not in os.environ:
+            os.environ[key] = val
+
+
+def save_settings(data: dict[str, Any]) -> dict[str, str]:
+    """Persist settings to ``~/.senza-agent/settings.json`` and update ``os.environ``.
+
+    Only non-empty string values are kept; empty values remove the key
+    (matching the frontend's "empty = delete" convention).
+    Returns the new settings dict as it was written.
+    """
+    # Merge with existing file contents so partial updates work.
+    path = _settings_file()
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    for key, val in data.items():
+        sval = str(val).strip() if val is not None else ""
+        if sval:
+            existing[key] = sval
+            os.environ[key] = sval
+        else:
+            # Empty value → remove key
+            existing.pop(key, None)
+            os.environ.pop(key, None)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    return existing

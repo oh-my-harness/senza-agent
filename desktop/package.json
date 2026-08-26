@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac",
-    "build:win": "electron-builder --win",
+    "build:win": "electron-builder --win nsis msi",
     "build:linux": "electron-builder --linux"
   },
   "engines": {
@@ -25,14 +25,63 @@
       "preload.js",
       "icon.png"
     ],
+    "extraResources": [
+      {
+        "from": "../senza_agent",
+        "to": "senza_agent",
+        "filter": ["**/*", "!__pycache__/**", "!**/*.pyc"]
+      },
+      {
+        "from": "../pyproject.toml",
+        "to": "pyproject.toml"
+      },
+      {
+        "from": "../requirements.txt",
+        "to": "requirements.txt"
+      },
+      {
+        "from": "../SKILLS",
+        "to": "SKILLS"
+      },
+      {
+        "from": "../AGENTS.md",
+        "to": "AGENTS.md"
+      },
+      {
+        "from": "setup_python.ps1",
+        "to": "setup_python.ps1"
+      }
+    ],
     "mac": {
       "target": "dmg",
       "icon": "icon.png",
       "category": "public.app-category.developer-tools"
     },
     "win": {
-      "target": "nsis",
+      "target": [
+        "nsis",
+        "msi"
+      ],
       "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SenzaAgent",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "installer.nsh"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SenzaAgent"
     },
     "linux": {
       "target": "AppImage",

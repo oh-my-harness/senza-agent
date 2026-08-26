@@ -7795,9 +7795,15 @@ fetch('/api/version').then(r => r.json()).then(d => {
       if (r.ok) {
         const lanChanged = (data.DASHBOARD_HOST === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1') !== loadedHost
                         || data.DASHBOARD_PORT !== loadedPort;
-        showMsg('success', lanChanged
-          ? '已保存。绑定地址/端口需重启看板进程后生效，其余配置下次启动 Agent 时生效。'
-          : '已保存，新配置将在下次启动 Agent 时生效');
+        let msg;
+        if (lanChanged) {
+          msg = '已保存。绑定地址/端口需重启看板进程后生效，其余配置已' + (r.rebuilt ? '即时生效' : '将在任务结束后生效') + '。';
+        } else if (r.rebuilt) {
+          msg = '已保存，配置已即时生效。';
+        } else {
+          msg = '已保存，配置将在当前任务结束后生效。';
+        }
+        showMsg('success', msg);
         setTimeout(closeSettings, lanChanged ? 2200 : 1000);
       }
       else showMsg('error', '保存失败：' + (r.error || '未知错误'));

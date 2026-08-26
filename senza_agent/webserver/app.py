@@ -85,7 +85,7 @@ class WebServer:
         self.browser = BrowserController()
         self.task = TaskManager()
         self.state_bridge = StateBridge(self.task, self.render)
-        self.qevos_api = QevosAPI(self.state_bridge, self.task)
+        self.qevos_api = QevosAPI(self.state_bridge, self.task, self)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
@@ -98,6 +98,28 @@ class WebServer:
         self.task._on_start = self.state_bridge.on_task_start
         self.task._on_event = self.state_bridge.on_task_event
         self.task._on_end = self.state_bridge.on_task_end
+        # Wire rebuild callback for deferred config hot-reload.
+        self.state_bridge._rebuild_callback = self.rebuild_harness
+
+    def rebuild_harness(self) -> bool:
+        """Reload config and rebuild the agent harness in-place.
+
+        Returns True if the harness was rebuilt, False if a task is running
+        (caller should retry later) or rebuild failed.
+        """
+        if self.task.is_running:
+            return False
+        try:
+            from senza_agent.config import load_config
+            from senza_agent.agent import create_agent
+            config = load_config()
+            harness = create_agent(config)
+            self.set_harness(harness)
+            return True
+        except Exception as e:
+            import sys
+            print(f"[senza-agent] harness rebuild failed: {e}", file=sys.stderr)
+            return False
 
     # ── App setup ────────────────────────────────────────────────────────
 

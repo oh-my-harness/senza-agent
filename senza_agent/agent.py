@@ -121,7 +121,9 @@ def create_agent(config: Config) -> Any:
         .final_answer_validator(behavior.validator)
         .should_stop_hook(behavior.should_stop)
         .auto_compact(True)
-        .retry(3, 1000)
+        .retry(5, 1000)
+        .temperature(0.1)
+        .max_tokens(8192)
     )
 
     # ── Compaction tuning ──────────────────────────────────────────────

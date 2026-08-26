@@ -32,12 +32,35 @@ const { spawn } = require('child_process');
 app.setAppUserModelId('com.senzaagent.desktop');
 
 // ── Paths ──────────────────────────────────────────────────────────────────
+//
+// When packaged with electron-builder, the app structure is:
+//
+//   <InstallDir>/
+//   ├── SenzaAgent.exe                 ← Electron binary
+//   ├── resources/
+//   │   ├── app.asar                    ← main.js, preload.js, icon.png
+//   │   ├── senza_agent/               ← Python backend source
+//   │   ├── SKILLS/                     ← Skill definitions
+//   │   ├── AGENTS.md
+//   │   ├── pyproject.toml
+//   │   ├── requirements.txt
+//   │   └── setup_python.ps1
+//   └── python_venv/                    ← Created by installer / first-run
+//       └── Scripts/python.exe
+//
+// APP_ROOT = the directory containing senza_agent/ (the Python source root).
+//   - Packaged: <InstallDir>/resources/
+//   - Dev:      repo root (parent of desktop/)
+//
+// INSTALL_DIR = the top-level installation directory (for venv lookup).
+//   - Packaged: parent of resources/
+//   - Dev:      same as APP_ROOT
 
-const APP_ROOT    = app.isPackaged
-  ? path.dirname(app.getPath('exe'))
-  : path.resolve(__dirname, '..');
+const EXE_DIR     = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve(__dirname, '..');
+const APP_ROOT    = app.isPackaged ? path.join(EXE_DIR, 'resources') : path.resolve(__dirname, '..');
+const INSTALL_DIR = app.isPackaged ? EXE_DIR : APP_ROOT;
 const DOT_ENV_DIR = app.isPackaged
-  ? (process.platform === 'win32' ? APP_ROOT : app.getPath('userData'))
+  ? (process.platform === 'win32' ? EXE_DIR : app.getPath('userData'))
   : APP_ROOT;
 
 // ── .env loading (same logic as cli.py load_dotenv_if_present) ─────────────
@@ -68,24 +91,70 @@ loadDotenv();
 function findPythonCmd() {
   // 1. Explicit override
   if (process.env.PYTHON_CMD) return process.env.PYTHON_CMD;
-  // 2. Bundled Python (packaged app)
+  // 2. Installer-created venv (packaged app on Windows): <InstallDir>/python_venv/
+  const installerVenv = process.platform === 'win32'
+    ? path.join(INSTALL_DIR, 'python_venv', 'Scripts', 'python.exe')
+    : path.join(INSTALL_DIR, 'python_venv', 'bin', 'python');
+  if (fs.existsSync(installerVenv)) return installerVenv;
+  // 3. Bundled Python (packaged app)
   const bundled = process.platform === 'win32'
     ? path.join(__dirname, 'vendor', 'python', 'python.exe')
     : path.join(__dirname, 'vendor', 'python', 'bin', 'python3');
   if (fs.existsSync(bundled)) return bundled;
-  // 3. Local venv (repo root .venv)
+  // 4. Local venv (repo root .venv — dev mode)
   const repoVenv = process.platform === 'win32'
     ? path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe')
     : path.join(APP_ROOT, '.venv', 'bin', 'python');
   if (fs.existsSync(repoVenv)) return repoVenv;
-  // 4. Sibling Senza repo venv (dev setup: senza-agent lives next to Senza)
+  // 5. Sibling Senza repo venv (dev setup: senza-agent lives next to Senza)
   const senzaVenv = process.platform === 'win32'
     ? path.join(APP_ROOT, '..', 'Senza', '.venv', 'Scripts', 'python.exe')
     : path.join(APP_ROOT, '..', 'Senza', '.venv', 'bin', 'python');
   if (fs.existsSync(senzaVenv)) return senzaVenv;
-  // 5. System python3 / python
+  // 6. System python3 / python
   const sysBin = process.platform === 'win32' ? 'python' : 'python3';
   return sysBin;
+}
+
+// ── First-run venv setup (fallback for MSI or if installer script failed) ──
+
+function ensurePythonVenv() {
+  if (!app.isPackaged || process.platform !== 'win32') return Promise.resolve();
+
+  const venvPython = path.join(INSTALL_DIR, 'python_venv', 'Scripts', 'python.exe');
+  if (fs.existsSync(venvPython)) return Promise.resolve();
+
+  // MSI installer doesn't run setup_python.ps1 (NSIS-only hook).
+  // On first launch, if no venv exists, run the setup script.
+  const setupScript = path.join(APP_ROOT, 'setup_python.ps1');
+  if (!fs.existsSync(setupScript)) return Promise.resolve();
+
+  console.log('[desktop] No Python venv found — running setup_python.ps1...');
+  return new Promise((resolve) => {
+    const proc = spawn('powershell.exe', [
+      '-ExecutionPolicy', 'Bypass',
+      '-NoProfile',
+      '-File', setupScript,
+      '-InstallDir', INSTALL_DIR,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    proc.stdout.on('data', (data) => {
+      const text = data.toString().trim();
+      if (text) console.log('[setup]', text);
+    });
+    proc.stderr.on('data', (data) => {
+      const text = data.toString().trim();
+      if (text) console.error('[setup]', text);
+    });
+    proc.on('exit', (code) => {
+      console.log(`[setup] setup_python.ps1 exited (code=${code})`);
+      resolve();
+    });
+    proc.on('error', (err) => {
+      console.error('[setup] Failed to run setup_python.ps1:', err.message);
+      resolve(); // Don't block — the error window will show what happened.
+    });
+  });
 }
 
 // ── Port selection ─────────────────────────────────────────────────────────
@@ -109,16 +178,24 @@ let agentPort = 8090;
 async function startAgent() {
   agentPort = await findFreePort(8090);
 
+  // Ensure the Python venv exists (first run after MSI install, or if the
+  // NSIS post-install step failed).  No-op if venv already present or dev mode.
+  await ensurePythonVenv();
+
   const pyCmd  = findPythonCmd();
   const args   = ['-m', 'senza_agent.cli', '--no-inspect', '--web', String(agentPort)];
 
-  // PYTHONPATH: point at senza-agent dir so `senza_agent` is importable.
+  // PYTHONPATH: point at the directory containing senza_agent/ so the package
+  // is importable.  In packaged mode this is APP_ROOT (resources/).
+  // SENZA_AGENT_DIR: tells the Python backend where AGENTS.md, SKILLS/, etc.
+  // live (same as APP_ROOT in packaged mode).
   const env = { ...process.env };
   if (!env.PYTHONPATH) {
     env.PYTHONPATH = APP_ROOT;
   } else {
     env.PYTHONPATH = APP_ROOT + path.delimiter + env.PYTHONPATH;
   }
+  env.SENZA_AGENT_DIR = APP_ROOT;
   env.PYTHONUTF8       = '1';
   env.PYTHONIOENCODING = 'utf-8';
 
@@ -251,21 +328,49 @@ function setupMenu() {
 
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
+function showLoadingWindow(message) {
+  const win = new BrowserWindow({
+    width: 480, height: 200, frame: false, resizable: false,
+    title: 'senza-agent', backgroundColor: '#0d1117',
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  win.loadURL('data:text/html,' + encodeURIComponent(
+    `<div style="font-family:system-ui;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">` +
+    `<div style="font-size:18px;font-weight:600;">SenzaAgent</div>` +
+    `<div style="font-size:14px;color:#8b949e;">${message}</div>` +
+    `<div style="width:200px;height:4px;background:#21262d;border-radius:2px;overflow:hidden;">` +
+    `<div style="width:40%;height:100%;background:#58a6ff;border-radius:2px;animation:pulse 1.5s ease-in-out infinite;"></div></div>` +
+    `<style>@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}</style>` +
+    `</div>`));
+  return win;
+}
+
 app.whenReady().then(async () => {
   setupMenu();
 
+  // Show a loading window during first-run setup (venv creation can take 30s+).
+  const venvPython = process.platform === 'win32'
+    ? path.join(INSTALL_DIR, 'python_venv', 'Scripts', 'python.exe')
+    : '';
+  const needsSetup = app.isPackaged && process.platform === 'win32' && !fs.existsSync(venvPython);
+  let loadingWin = null;
+  if (needsSetup) {
+    loadingWin = showLoadingWindow('Setting up Python environment...');
+  }
+
   try {
     await startAgent();
-    // Wait up to 30s for the Python webserver to be ready.
-    await waitForServer(agentPort, 60, 500);
+    // Wait up to 120s for the Python webserver (first-run pip install is slow).
+    await waitForServer(agentPort, 240, 500);
   } catch (err) {
     console.error('[desktop] Failed to start agent:', err.message);
-    // Show an error window.
+    if (loadingWin) loadingWin.close();
     mainWindow = new BrowserWindow({ width: 500, height: 300, title: 'senza-agent — Error' });
     mainWindow.loadURL('data:text/html,<h2 style="font-family:sans-serif;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;align-items:center;justify-content:flex-start;padding:20px;">' + err.message + '</h2>');
     return;
   }
 
+  if (loadingWin) loadingWin.close();
   createWindow();
 
   app.on('activate', () => {

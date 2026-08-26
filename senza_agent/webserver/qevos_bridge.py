@@ -143,6 +143,8 @@ class StateBridge:
         self.task = task_manager
         self.render = render_manager
         self._ws_clients: set[web.WebSocketResponse] = set()
+        self.pending_rebuild: bool = False
+        self._rebuild_callback: Any = None
         self._state: dict[str, Any] = {
             "runs": [],
             "runSummaries": {},
@@ -180,8 +182,28 @@ class StateBridge:
         return self._state
 
     def _refresh_runs(self) -> None:
-        """Refresh runs list from disk."""
-        self._state["runs"] = _list_runs()
+        """Refresh runs list, summaries, and tags from disk.
+
+        Frontend contract (panel.html):
+          - state.runs         : string[] of run IDs
+          - state.runSummaries : { [runId]: summaryText }
+          - state.runTags      : { [runId]: string[] }
+        """
+        run_dicts = _list_runs()
+        self._state["runs"] = [r["runId"] for r in run_dicts]
+        self._state["runSummaries"] = {
+            r["runId"]: r.get("summary", "") for r in run_dicts
+        }
+        # Tags: read from summary.json if present (summary may contain a "tags" list).
+        run_tags: dict[str, list[str]] = {}
+        for r in run_dicts:
+            run_dir = _RUNS_DIR / r["runId"]
+            summary = _read_json(run_dir / "summary.json")
+            if summary and isinstance(summary.get("tags"), list):
+                run_tags[r["runId"]] = [str(t) for t in summary["tags"]]
+            else:
+                run_tags[r["runId"]] = []
+        self._state["runTags"] = run_tags
 
     async def broadcast(self) -> None:
         """Broadcast current state to all connected WS clients."""
@@ -486,6 +508,14 @@ class StateBridge:
                 encoding="utf-8",
             )
         self._refresh_runs()
+        # If config was saved while a task was running, rebuild harness now.
+        if self.pending_rebuild:
+            self.pending_rebuild = False
+            if self._rebuild_callback:
+                try:
+                    self._rebuild_callback()
+                except Exception:
+                    pass
         await self.broadcast()
 
     async def on_followup(self, text: str) -> None:
@@ -513,9 +543,10 @@ class StateBridge:
 class QevosAPI:
     """QevosAgent-compatible REST API handlers for the dashboard."""
 
-    def __init__(self, state_bridge: StateBridge, task_manager: Any) -> None:
+    def __init__(self, state_bridge: StateBridge, task_manager: Any, webserver: Any = None) -> None:
         self.sb = state_bridge
         self.task = task_manager
+        self.ws = webserver
 
     def add_routes(self, app: web.Application) -> None:
         """Register all QevosAgent-compatible API routes."""
@@ -941,34 +972,43 @@ class QevosAPI:
         return web.json_response({"ok": True})
 
     # ── Env ──────────────────────────────────────────────────────────────
-
     async def _api_env_get(self, request: web.Request) -> web.Response:
+        """Return current LLM config (from env, which is synced with settings.json)."""
         api_key = os.environ.get("OPENAI_API_KEY", "")
-        api_base = os.environ.get("OPENAI_API_BASE", "")
+        api_base = os.environ.get("OPENAI_API_BASE", "") or os.environ.get("OPENAI_BASE_URL", "")
         model = os.environ.get("OPENAI_MODEL", "")
         return web.json_response({
             "OPENAI_BASE_URL": api_base,
             "OPENAI_API_KEY": api_key[:8] + "..." if len(api_key) > 8 else api_key,
             "OPENAI_MODEL": model,
-            "OPENAI_TEMPERATURE": "",
+            "OPENAI_TEMPERATURE": os.environ.get("OPENAI_TEMPERATURE", ""),
             "configured": bool(api_key and api_base),
         })
 
     async def _api_env_post(self, request: web.Request) -> web.Response:
+        """Save settings to ``~/.senza-agent/settings.json``, update env, and
+        hot-reload the agent harness if idle.
+
+        If a task is running, the settings are still persisted and env is
+        updated, but the harness rebuild is deferred — the next idle moment
+        (task end) will pick up the new config via ``_maybe_rebuild_after_task``.
+        """
         try:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "invalid JSON"}, status=400)
-        # Update env vars in current process
-        if body.get("OPENAI_BASE_URL"):
-            os.environ["OPENAI_API_BASE"] = body["OPENAI_BASE_URL"]
-        if body.get("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = body["OPENAI_API_KEY"]
-        if body.get("OPENAI_MODEL"):
-            os.environ["OPENAI_MODEL"] = body["OPENAI_MODEL"]
-        if body.get("OPENAI_TEMPERATURE"):
-            os.environ["OPENAI_TEMPERATURE"] = body["OPENAI_TEMPERATURE"]
-        return web.json_response({"ok": True})
+
+        from senza_agent.config import save_settings
+        save_settings(body)
+
+        # Hot-reload: rebuild harness if idle; otherwise defer to task end.
+        rebuilt = False
+        if self.task.is_running:
+            self.sb.pending_rebuild = True
+        elif self.ws is not None:
+            rebuilt = self.ws.rebuild_harness()
+
+        return web.json_response({"ok": True, "rebuilt": rebuilt})
 
     async def _api_env_test(self, request: web.Request) -> web.Response:
         try:
