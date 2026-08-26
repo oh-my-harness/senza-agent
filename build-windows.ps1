@@ -107,25 +107,29 @@ if ($SkipClone) {
 $DesktopDir = Join-Path $RepoDir "desktop"
 Write-Step "Installing npm dependencies (this may take a few minutes) ..."
 
+# Temporarily relax error preference: npm/electron-builder write progress
+# and warnings to stderr, which PowerShell treats as fatal under Stop mode.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 Push-Location $DesktopDir
 try {
-    # Use npm ci for reproducible installs (requires package-lock.json).
-    # Falls back to npm install if package-lock.json is missing.
     if (Test-Path "package-lock.json") {
-        npm ci 2>&1 | ForEach-Object {
+        & cmd /c "npm ci 2>&1" | ForEach-Object {
             if ($_ -match "added|changed|removed|npm warn|npm notice") {
                 Write-Host "    $_" -ForegroundColor DarkGray
             }
         }
     } else {
         Write-Warn "package-lock.json not found, using npm install"
-        npm install 2>&1 | ForEach-Object {
+        & cmd /c "npm install 2>&1" | ForEach-Object {
             if ($_ -match "added|changed|removed|npm warn|npm notice") {
                 Write-Host "    $_" -ForegroundColor DarkGray
             }
         }
     }
     if ($LASTEXITCODE -ne 0) {
+        $ErrorActionPreference = $prevEAP
         Write-Err "npm install failed (exit $LASTEXITCODE)."
         Write-Host "    Try: cd $DesktopDir; npm install"
         exit 1
@@ -133,23 +137,29 @@ try {
     Write-OK "Dependencies installed"
 } finally {
     Pop-Location
+    $ErrorActionPreference = $prevEAP
 }
 
 # ── 4. Build installers ──────────────────────────────────────────────
 Write-Step "Building NSIS + MSI installers (electron-builder) ..."
 
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 Push-Location $DesktopDir
 try {
-    npm run build:win 2>&1 | ForEach-Object {
+    & cmd /c "npm run build:win 2>&1" | ForEach-Object {
         Write-Host "    $_" -ForegroundColor DarkGray
     }
     if ($LASTEXITCODE -ne 0) {
+        $ErrorActionPreference = $prevEAP
         Write-Err "Build failed (exit $LASTEXITCODE)."
         exit 1
     }
     Write-OK "Build completed"
 } finally {
     Pop-Location
+    $ErrorActionPreference = $prevEAP
 }
 
 # ── 5. Show results ──────────────────────────────────────────────────
