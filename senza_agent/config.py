@@ -299,11 +299,16 @@ def save_settings(data: dict[str, Any]) -> dict[str, str]:
         except (json.JSONDecodeError, OSError):
             existing = {}
 
+    _API_KEY_SUFFIX = "_API_KEY"
     for key, val in data.items():
         sval = str(val).strip() if val is not None else ""
         if sval:
             existing[key] = sval
             os.environ[key] = sval
+        elif key.endswith(_API_KEY_SUFFIX):
+            # Empty API key = user didn't change it (frontend sends empty
+            # because the key field is blanked for security). Keep existing.
+            pass
         else:
             # Empty value → remove key
             existing.pop(key, None)

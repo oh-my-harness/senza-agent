@@ -973,17 +973,32 @@ class QevosAPI:
 
     # ── Env ──────────────────────────────────────────────────────────────
     async def _api_env_get(self, request: web.Request) -> web.Response:
-        """Return current LLM config (from env, which is synced with settings.json)."""
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        api_base = os.environ.get("OPENAI_API_BASE", "") or os.environ.get("OPENAI_BASE_URL", "")
-        model = os.environ.get("OPENAI_MODEL", "")
-        return web.json_response({
-            "OPENAI_BASE_URL": api_base,
-            "OPENAI_API_KEY": api_key[:8] + "..." if len(api_key) > 8 else api_key,
-            "OPENAI_MODEL": model,
-            "OPENAI_TEMPERATURE": os.environ.get("OPENAI_TEMPERATURE", ""),
-            "configured": bool(api_key and api_base),
-        })
+        """Return current LLM config (from env, which is synced with settings.json).
+
+        Returns the full env state including all API slots. API keys are
+        returned unmasked — this is a local dashboard, not a remote API.
+        """
+        # Collect all relevant env vars for the frontend.
+        keys = [
+            "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_TEMPERATURE",
+            "BACKUP_OPENAI_BASE_URL", "BACKUP_OPENAI_API_KEY", "BACKUP_OPENAI_MODEL", "BACKUP_OPENAI_TEMPERATURE",
+            "BACKUP2_OPENAI_BASE_URL", "BACKUP2_OPENAI_API_KEY", "BACKUP2_OPENAI_MODEL", "BACKUP2_OPENAI_TEMPERATURE",
+            "ADVISOR1_OPENAI_BASE_URL", "ADVISOR1_OPENAI_API_KEY", "ADVISOR1_OPENAI_MODEL", "ADVISOR1_OPENAI_TEMPERATURE",
+            "ADVISOR2_OPENAI_BASE_URL", "ADVISOR2_OPENAI_API_KEY", "ADVISOR2_OPENAI_MODEL", "ADVISOR2_OPENAI_TEMPERATURE",
+            "PREFERRED_API", "MAX_ITERS", "INSTANCE_NAME",
+            "HTTPS_PROXY", "HTTP_PROXY",
+            "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_ALLOW", "DASHBOARD_DENY",
+            "MAX_TOOL_FEEDBACK_CHARS", "LLM_MAX_TOKENS",
+        ]
+        result = {}
+        for k in keys:
+            v = os.environ.get(k, "")
+            # Also check OPENAI_API_BASE as fallback for OPENAI_BASE_URL
+            if k == "OPENAI_BASE_URL" and not v:
+                v = os.environ.get("OPENAI_API_BASE", "")
+            result[k] = v
+        result["configured"] = bool(result.get("OPENAI_API_KEY") and result.get("OPENAI_BASE_URL"))
+        return web.json_response(result)
 
     async def _api_env_post(self, request: web.Request) -> web.Response:
         """Save settings to ``~/.senza-agent/settings.json``, update env, and
