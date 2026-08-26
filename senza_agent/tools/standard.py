@@ -1258,7 +1258,7 @@ def tool_load_video(
 # ── Ask user ────────────────────────────────────────────────────────────────
 
 
-def tool_ask_user(question: str = "", **kwargs) -> dict:
+def tool_ask_user(question: str = "") -> dict:
     """Ask the user a question and block until they answer.
 
     Use this when you need clarification, a decision, or information that
