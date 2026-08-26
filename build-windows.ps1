@@ -130,7 +130,7 @@ if (-not $NoMirror) {
 
 
 # ── 3. Install npm dependencies ──────────────────────────────────────
-$DesktopDir = Join-Path $RepoDir "desktop"
+$DesktopDir = (Resolve-Path (Join-Path $RepoDir "desktop")).Path
 Write-Step "Installing npm dependencies (this may take a few minutes) ..."
 
 # Start-Process runs npm as a separate process — output streams directly
