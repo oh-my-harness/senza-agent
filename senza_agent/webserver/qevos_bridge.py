@@ -190,6 +190,11 @@ class StateBridge:
           - state.runTags      : { [runId]: string[] }
         """
         run_dicts = _list_runs()
+        # If the runs dir is temporarily unavailable (network drive hiccup,
+        # permissions, etc.), preserve the existing list rather than wiping
+        # the sidebar.
+        if not run_dicts and self._state.get("runs"):
+            return
         self._state["runs"] = [r["runId"] for r in run_dicts]
         self._state["runSummaries"] = {
             r["runId"]: r.get("summary", "") for r in run_dicts

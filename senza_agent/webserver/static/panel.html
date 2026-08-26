@@ -2546,7 +2546,13 @@ function handleMsg(msg) {
     const prevActiveRunId = gState && gState.activeRunId;
     // Save previous events BEFORE overwriting gState, for streaming fast path
     const prevEvents = (gState && gState.events) || null;
+    const prevRuns   = (gState && gState.runs)   || null;
     gState = msg;
+    // If the server sent an empty runs list (e.g. transient disk error),
+    // preserve the existing list so the sidebar doesn't get wiped.
+    if (prevRuns && (!Array.isArray(msg.runs) || msg.runs.length === 0)) {
+      gState.runs = prevRuns;
+    }
     if ((msg.instanceName || '') !== gInstanceName) {
       gInstanceName = msg.instanceName || '';
       document.getElementById('wsPort').textContent = wsPortLabel();
