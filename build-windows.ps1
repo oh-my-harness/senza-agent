@@ -24,14 +24,25 @@
 #.EXAMPLE
 #    # Build without China mirror (if you're outside China or have VPN)
 #    .\build-windows.ps1 -NoMirror
-#>
 param(
-    [string]$RepoDir = (Join-Path $PWD "senza-agent"),
+    [string]$RepoDir = "",
     [switch]$SkipClone,
     [switch]$NoMirror
 )
 
 $ErrorActionPreference = "Stop"
+
+# Auto-detect: if RepoDir is empty or points to the default subdirectory,
+# and the script is run from inside the repo root (desktop/ exists), use
+# the current directory instead of cloning into a subdirectory.
+if (-not $RepoDir -or $RepoDir -eq (Join-Path $PWD "senza-agent")) {
+    if (Test-Path (Join-Path $PWD "desktop\package.json")) {
+        $RepoDir = $PWD
+        $SkipClone = $true
+    } else {
+        $RepoDir = Join-Path $PWD "senza-agent"
+    }
+}
 
 $repoUrl = "https://github.com/oh-my-harness/senza-agent.git"
 
@@ -92,10 +103,13 @@ if ($SkipClone) {
 } else {
     Write-Step "Cloning / updating senza-agent ..."
     if (Test-Path (Join-Path $RepoDir ".git")) {
+        # Repo exists — pull latest
         Write-OK "Repo exists — pulling latest."
         Push-Location $RepoDir
         git pull --quiet origin main 2>$null
         Pop-Location
+    } else {
+        # Clone fresh
         $cloneOk = $false
         git clone --quiet $repoUrl $RepoDir 2>&1 | Out-Null
         if (Test-Path (Join-Path $RepoDir ".git")) {
