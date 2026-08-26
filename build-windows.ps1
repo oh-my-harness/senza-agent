@@ -115,18 +115,10 @@ $ErrorActionPreference = "Continue"
 Push-Location $DesktopDir
 try {
     if (Test-Path "package-lock.json") {
-        & cmd /c "npm ci 2>&1" | ForEach-Object {
-            if ($_ -match "added|changed|removed|npm warn|npm notice") {
-                Write-Host "    $_" -ForegroundColor DarkGray
-            }
-        }
+        npm ci 2>&1 | Out-Host
     } else {
         Write-Warn "package-lock.json not found, using npm install"
-        & cmd /c "npm install 2>&1" | ForEach-Object {
-            if ($_ -match "added|changed|removed|npm warn|npm notice") {
-                Write-Host "    $_" -ForegroundColor DarkGray
-            }
-        }
+        npm install 2>&1 | Out-Host
     }
     if ($LASTEXITCODE -ne 0) {
         $ErrorActionPreference = $prevEAP
@@ -148,9 +140,7 @@ $ErrorActionPreference = "Continue"
 
 Push-Location $DesktopDir
 try {
-    & cmd /c "npm run build:win 2>&1" | ForEach-Object {
-        Write-Host "    $_" -ForegroundColor DarkGray
-    }
+    npm run build:win 2>&1 | Out-Host
     if ($LASTEXITCODE -ne 0) {
         $ErrorActionPreference = $prevEAP
         Write-Err "Build failed (exit $LASTEXITCODE)."
