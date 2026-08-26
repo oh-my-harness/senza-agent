@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    One-click build script for SenzaAgent Windows installer (NSIS + MSI).
+    One-click build script for SenzaAgent Windows installer (NSIS).
 
 .DESCRIPTION
     Clones (or updates) the senza-agent repo, installs Node.js dependencies,
-    and builds the NSIS .exe and MSI .msi installers via electron-builder.
+    and builds the NSIS .exe installer via electron-builder.
 
     Run this on a Windows machine with Node.js 18+ and Git installed.
 
@@ -155,8 +155,8 @@ try {
     Pop-Location
 }
 
-# ── 4. Build installers ──────────────────────────────────────────────
-Write-Step "Building NSIS + MSI installers (electron-builder) ..."
+# ── 4. Build installer ──────────────────────────────────────────────
+Write-Step "Building NSIS installer (electron-builder) ..."
 
 Push-Location $DesktopDir
 try {
@@ -181,7 +181,6 @@ if (Test-Path $DistDir) {
         $sizeMB = [math]::Round($f.Length / 1MB, 1)
         $tag = switch ($f.Extension) {
             ".exe" { "NSIS installer" }
-            ".msi" { "MSI installer" }
             ".zip" { "portable" }
             default { "" }
         }

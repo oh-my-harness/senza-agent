@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac",
-    "build:win": "electron-builder --win nsis msi",
+    "build:win": "electron-builder --win nsis",
     "build:linux": "electron-builder --linux"
   },
   "engines": {
@@ -59,8 +59,7 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "msi"
+        "nsis"
       ],
       "icon": "icon.png"
     },
@@ -74,14 +73,6 @@
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
       "include": "installer.nsh"
-    },
-    "msi": {
-      "oneClick": false,
-      "perMachine": false,
-      "runAfterFinish": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "SenzaAgent"
     },
     "linux": {
       "target": "AppImage",
