@@ -21,11 +21,14 @@
 .EXAMPLE
     # Build from an existing repo copy
     .\build-windows.ps1 -SkipClone -RepoDir D:\code\senza-agent
+#.EXAMPLE
+#    # Build without China mirror (if you're outside China or have VPN)
+#    .\build-windows.ps1 -NoMirror
 #>
-[CmdletBinding()]
 param(
     [string]$RepoDir = (Join-Path $PWD "senza-agent"),
-    [switch]$SkipClone
+    [switch]$SkipClone,
+    [switch]$NoMirror
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,15 +96,38 @@ if ($SkipClone) {
         Push-Location $RepoDir
         git pull --quiet origin main 2>$null
         Pop-Location
-    } else {
+        $cloneOk = $false
         git clone --quiet $repoUrl $RepoDir 2>&1 | Out-Null
-        if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
+        if (Test-Path (Join-Path $RepoDir ".git")) {
+            $cloneOk = $true
+        } elseif (-not $NoMirror) {
+            Write-Warn "Direct clone failed, trying mirror ..."
+            $mirrorUrl = "https://ghfast.top/$repoUrl"
+            git clone --quiet $mirrorUrl $RepoDir 2>&1 | Out-Null
+            if (Test-Path (Join-Path $RepoDir ".git")) {
+                $cloneOk = $true
+            }
+        }
+        if (-not $cloneOk) {
             Write-Err "Clone failed. Check your network / Git installation."
             exit 1
         }
         Write-OK "Cloned to $RepoDir"
     }
 }
+
+# ── 2b. Configure npm mirror (China) ────────────────────────────────
+if (-not $NoMirror) {
+    Write-Step "Configuring npm mirror (npmmirror.com) ..."
+    npm config set registry https://registry.npmmirror.com 2>$null
+    # Electron + NSIS download mirrors (electron-builder downloads these
+    # at build time, often slow or blocked from China)
+    $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+    $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
+    Write-OK "npm registry -> npmmirror.com"
+    Write-OK "Electron / NSIS mirror -> npmmirror.com"
+}
+
 
 # ── 3. Install npm dependencies ──────────────────────────────────────
 $DesktopDir = Join-Path $RepoDir "desktop"
