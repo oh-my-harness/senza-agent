@@ -21,9 +21,10 @@
 .EXAMPLE
     # Build from an existing repo copy
     .\build-windows.ps1 -SkipClone -RepoDir D:\code\senza-agent
-#.EXAMPLE
-#    # Build without China mirror (if you're outside China or have VPN)
-#    .\build-windows.ps1 -NoMirror
+
+# Build without China mirror (if you're outside China or have VPN)
+# .\build-windows.ps1 -NoMirror
+#>
 param(
     [string]$RepoDir = "",
     [switch]$SkipClone,
