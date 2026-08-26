@@ -368,6 +368,18 @@ def get_standard_tools() -> list:
         callback=standard.tool_load_video,
     ))
 
+    # ── Ask user ─────────────────────────────────────────────────────────────
+    tools.append(senza.create_tool(
+        name="ask_user",
+        description=(
+            "Ask the user a question and wait for their answer. "
+            "Use this when you need clarification, a decision, or information "
+            "that only the user can provide. The agent pauses until the user responds."
+        ),
+        parameters=_str_schema({"question": "The question to ask the user"}, ["question"]),
+        callback=standard.tool_ask_user,
+    ))
+
     # ── SSH ─────────────────────────────────────────────────────────────────
     tools.append(senza.create_tool(
         name="ssh_execute",

@@ -1255,6 +1255,53 @@ def tool_load_video(
     return _ok({"summary": summary, "frames": extracted, "caption": caption})
 
 
+# ── Ask user ────────────────────────────────────────────────────────────────
+
+
+def tool_ask_user(question: str = "", **kwargs) -> dict:
+    """Ask the user a question and block until they answer.
+
+    Use this when you need clarification, a decision, or information that
+    only the user can provide. The question appears in the dashboard with a
+    yellow banner; the agent pauses until the user types a response.
+
+    Do NOT use this for:
+    - Things you can figure out yourself (read files, search, etc.)
+    - Simple confirmations — just proceed with the safe default
+
+    Args:
+        question: The question to ask the user. Be specific and concise.
+
+    Returns:
+        The user's answer text.
+    """
+    if not question or not question.strip():
+        return _err("question must not be empty")
+    q = question.strip()
+
+    # Try the web dashboard bridge first (when running with --web).
+    try:
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        bridge = get_bridge()
+        if bridge is not None:
+            answer = bridge.ask(q)
+            if answer:
+                return _ok({"answer": answer, "question": q})
+            return _ok({"answer": "", "question": q, "note": "user did not provide an answer"})
+    except ImportError:
+        pass
+
+    # Fallback: no web server — read from stdin.
+    try:
+        print(f"\n{'='*60}")
+        print(f"💬 Agent asks: {q}")
+        print(f"{'='*60}")
+        answer = input("Your answer: ").strip()
+        return _ok({"answer": answer, "question": q})
+    except (EOFError, KeyboardInterrupt):
+        return _ok({"answer": "", "question": q, "note": "input interrupted"})
+
+
 # ── SSH execute ─────────────────────────────────────────────────────────────
 
 

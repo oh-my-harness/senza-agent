@@ -313,6 +313,24 @@ class StateBridge:
         self._state["events"] = self._current_events[-500:]
         await self.broadcast()
 
+        # If the agent just called ask_user, the tool will block in the agent
+        # thread waiting for the user to answer. Switch to "paused" state so
+        # the dashboard shows the awaiting-input banner.
+        if ev_type == "tool_call" and qev.get("tool") == "ask_user":
+            question = ""
+            args = qev.get("args", {})
+            if isinstance(args, dict):
+                question = str(args.get("question", ""))
+            self._state["meta"]["awaiting_input"] = question
+            self._state["status"] = {"status": "paused"}
+            await self.broadcast()
+        # If the tool_result for ask_user just arrived, the agent is unblocked
+        # — clear the awaiting_input flag and return to running.
+        elif ev_type == "tool_result" and qev.get("tool") == "ask_user":
+            self._state["meta"].pop("awaiting_input", None)
+            self._state["status"] = {"status": "running"}
+            await self.broadcast()
+
     def _convert_event(self, ev: dict[str, Any]) -> Optional[dict[str, Any]]:
         """Convert a Senza SDK event dict to QevosAgent dashboard event format.
 
@@ -630,6 +648,8 @@ class QevosAPI:
         result = await self.task.abort_task()
         self.sb._state["agentAlive"] = False
         await self.sb.broadcast()
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        get_bridge().reset()
         return web.json_response(result)
 
     async def _api_inject(self, request: web.Request) -> web.Response:
@@ -640,6 +660,15 @@ class QevosAPI:
         command = (body.get("command") or "").strip()
         if not command:
             return web.json_response({"error": "command required"}, status=400)
+        # If the agent is paused waiting for an ask_user answer, route the
+        # user's text to the AskUserBridge instead of starting a new task.
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        bridge = get_bridge()
+        if bridge.is_active:
+            accepted = bridge.provide_answer(command)
+            if accepted:
+                return web.json_response({"ok": True, "ask_user_answer": True})
+            # Bridge became inactive between the check and the call — fall through
         # Strip /inject prefix — dashboard auto-prepends it for non-slash input
         if command.startswith("/inject "):
             command = command[len("/inject "):].strip()
