@@ -2309,6 +2309,18 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
           <label for="setCtxWindow">上下文窗口 tokens <span class="set-hint-inline">（LLM_CONTEXT_WINDOW，决定何时触发上下文压缩，留空=默认 153600；仅在服务端 /v1/models 未上报 max_model_len 时生效）</span></label>
           <input type="number" id="setCtxWindow" placeholder="（留空=默认 153600）" min="1024">
         </div>
+
+        <div class="set-fg">
+          <label for="setThinkingLevel">思考强度 <span class="set-hint-inline">（thinking_level，控制模型推理深度。none=关闭思考，minimal/low=轻量，medium=中等，high=深度。留空=模型默认）</span></label>
+          <select id="setThinkingLevel">
+            <option value="">（留空=模型默认）</option>
+            <option value="none">none — 关闭思考</option>
+            <option value="minimal">minimal — 极简</option>
+            <option value="low">low — 轻量</option>
+            <option value="medium">medium — 中等</option>
+            <option value="high">high — 深度</option>
+          </select>
+        </div>
       </div>
     </div>
     <div class="set-foot">
@@ -7616,6 +7628,7 @@ fetch('/api/version').then(r => r.json()).then(d => {
       apiTab = preferred; loadTab(preferred); switchApiTab(preferred);
       switchGeneralTab('other');
       document.getElementById('setIters').value = env.MAX_ITERS || '100';
+      document.getElementById('setThinkingLevel').value = env.THINKING_LEVEL || '';
       document.getElementById('setName').value  = env.INSTANCE_NAME || '';
       document.getElementById('setProxy').value = env.HTTPS_PROXY || env.HTTP_PROXY || '';
       // 高级设置
@@ -7777,6 +7790,8 @@ fetch('/api/version').then(r => r.json()).then(d => {
       MAX_ITERS:     document.getElementById('setIters').value.trim() || '100',
       INSTANCE_NAME: document.getElementById('setName').value.trim(),
       HTTPS_PROXY:   proxy,
+      // 思考强度 — 嵌套在 behavior 对象中保存
+      behavior: { thinking_level: document.getElementById('setThinkingLevel').value },
       HTTP_PROXY:    proxy,
       // 高级设置 —— 局域网可见性。空值会从 .env 删除该键，回到默认行为。
       DASHBOARD_HOST:  document.getElementById('setHost').value === '0.0.0.0' ? '0.0.0.0' : '',

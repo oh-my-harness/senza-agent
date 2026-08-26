@@ -31,6 +31,7 @@ class BehaviorConfig:
     advisor_model: Optional[str] = None
     budget_limit: float = 10.0
     wrapup_turns: int = 2
+    thinking_level: Optional[str] = None  # "none", "minimal", "low", "medium", "high"
 
 
 @dataclass
@@ -169,6 +170,8 @@ def _apply_file(cfg: Config, data: dict[str, Any]) -> None:
             cfg.behavior.budget_limit = behavior_data["budget_limit"]
         if "wrapup_turns" in behavior_data:
             cfg.behavior.wrapup_turns = behavior_data["wrapup_turns"]
+        if "thinking_level" in behavior_data:
+            cfg.behavior.thinking_level = behavior_data["thinking_level"]
 
 
 def _apply_env(cfg: Config) -> None:
@@ -205,6 +208,9 @@ def _apply_env(cfg: Config) -> None:
     env_spawn = os.environ.get("SENZA_AGENT_SPAWN_ENABLED")
     if env_spawn:
         cfg.spawn_enabled = env_spawn.lower() in ("1", "true", "yes")
+    env_thinking = os.environ.get("SENZA_AGENT_THINKING_LEVEL")
+    if env_thinking:
+        cfg.behavior.thinking_level = env_thinking
 
 
 def _apply_derived(cfg: Config) -> None:
@@ -301,6 +307,24 @@ def save_settings(data: dict[str, Any]) -> dict[str, str]:
 
     _API_KEY_SUFFIX = "_API_KEY"
     for key, val in data.items():
+        # Handle nested dicts (e.g. behavior, compaction) — merge into existing sub-objects
+        if isinstance(val, dict):
+            sub = existing.setdefault(key, {})
+            if not isinstance(sub, dict):
+                sub = {}
+                existing[key] = sub
+            for sub_key, sub_val in val.items():
+                ssub = str(sub_val).strip() if sub_val is not None else ""
+                if ssub:
+                    sub[sub_key] = ssub
+                else:
+                    sub.pop(sub_key, None)
+            # Also set env vars for known behavior keys
+            if key == "behavior":
+                for sub_key, sub_val in sub.items():
+                    os.environ[f"SENZA_AGENT_{sub_key.upper()}"] = sub_val
+            continue
+
         sval = str(val).strip() if val is not None else ""
         if sval:
             existing[key] = sval

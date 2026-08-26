@@ -126,6 +126,10 @@ def create_agent(config: Config) -> Any:
         .max_tokens(8192)
     )
 
+    # ── Thinking level ─────────────────────────────────────────────────
+    if config.behavior.thinking_level:
+        builder = builder.thinking_level(config.behavior.thinking_level)
+
     # ── Compaction tuning ──────────────────────────────────────────────
     cp = config.compaction
     if cp.context_window and cp.max_tokens:

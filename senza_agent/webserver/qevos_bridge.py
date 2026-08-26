@@ -1032,6 +1032,13 @@ class QevosAPI:
                 v = os.environ.get("OPENAI_API_BASE", "")
             result[k] = v
         result["configured"] = bool(result.get("OPENAI_API_KEY") and result.get("OPENAI_BASE_URL"))
+        # Also return behavior settings (nested in settings.json)
+        try:
+            from senza_agent.config import load_config
+            cfg = load_config()
+            result["THINKING_LEVEL"] = cfg.behavior.thinking_level or ""
+        except Exception:
+            result["THINKING_LEVEL"] = ""
         return web.json_response(result)
 
     async def _api_env_post(self, request: web.Request) -> web.Response:
