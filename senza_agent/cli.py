@@ -298,12 +298,21 @@ def _probe_one_endpoint(base_url: str, api_key, model: str, list_models=None) ->
         resp = _urlopen_no_env_proxy(url, headers, timeout=10)
         body = resp.read()
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Cannot connect to {base_url}. Error: HTTP {e.code} {e.reason}") from e
+        raise RuntimeError(f"HTTP {e.code} {e.reason}") from e
     except Exception as e:
         raise RuntimeError(f"Cannot connect to {base_url}. Error: {e}") from e
 
+    if not body:
+        raise RuntimeError(f"Empty response from {url}")
+
+    try:
+        payload = _json.loads(body)
+    except _json.JSONDecodeError:
+        snippet = body[:200].decode("utf-8", errors="replace")
+        raise RuntimeError(f"Non-JSON response from {url}: {snippet}") from None
+
     ids = []
-    for item in _json.loads(body).get("data", []) or []:
+    for item in payload.get("data", []) or []:
         mid = item.get("id") if isinstance(item, dict) else None
         if mid:
             ids.append(str(mid))
