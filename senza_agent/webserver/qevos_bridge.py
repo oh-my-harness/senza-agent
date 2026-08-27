@@ -31,7 +31,7 @@ _MODIFIED = object()
 
 _AGENT_DIR = Path(os.environ.get("SENZA_AGENT_DIR", Path.cwd()))
 _RUNS_DIR = _AGENT_DIR / "runs"
-_SKILLS_DIR = _AGENT_DIR / "skills"
+_SKILLS_DIR = _AGENT_DIR / "SKILLS"  # SDK layout: <name>/SKILL.md (same dir the harness loads)
 _CRONS_DIR = _AGENT_DIR / "crons"
 _APPS_DIR = _AGENT_DIR / "apps"
 _MEMORY_CONCEPT = _AGENT_DIR / "memory_concept.md"
@@ -907,22 +907,56 @@ class QevosAPI:
     async def _api_skills_list(self, request: web.Request) -> web.Response:
         skills = []
         if _SKILLS_DIR.is_dir():
-            for f in sorted(_SKILLS_DIR.iterdir()):
-                if f.is_file() and f.suffix == ".md":
-                    content = _read_text(f)
-                    first_line = ""
-                    for line in content.splitlines():
-                        line = line.strip()
-                        if line and not line.startswith("<!--"):
-                            first_line = line.lstrip("# ").strip()
+            for d in sorted(_SKILLS_DIR.iterdir()):
+                # SDK layout: <name>/SKILL.md; legacy flat <name>.md still listed
+                if d.is_dir() and (d / "SKILL.md").is_file():
+                    content = _read_text(d / "SKILL.md")
+                    name = d.name
+                elif d.is_file() and d.suffix == ".md":
+                    content = _read_text(d)
+                    name = d.stem
+                else:
+                    continue
+                # Prefer the YAML frontmatter description; fall back to the
+                # first non-frontmatter heading/paragraph line.
+                lines = content.splitlines()
+                desc = ""
+                if lines and lines[0].strip() == "---":
+                    for ln in lines[1:]:
+                        s = ln.strip()
+                        if s == "---":
                             break
-                    skills.append({"name": f.stem, "description": first_line})
+                        if s.startswith("description:"):
+                            desc = s[len("description:"):].strip().strip('"').strip("'")
+                            break
+                if not desc:
+                    in_fm = bool(lines and lines[0].strip() == "---")
+                    i = 1 if in_fm else 0
+                    if in_fm:
+                        while i < len(lines) and lines[i].strip() != "---":
+                            i += 1
+                        i += 1
+                    for ln in lines[i:]:
+                        s = ln.strip()
+                        if s and not s.startswith("<!--") and s != "---":
+                            desc = s.lstrip("# ").strip()
+                            break
+                skills.append({"name": name, "description": desc})
         return web.json_response({"skills": skills})
+
+    @staticmethod
+    def _skill_file(name: str) -> Optional[Path]:
+        """Resolve a skill name to its file: <name>/SKILL.md first, then flat."""
+        d = _SKILLS_DIR / name
+        if (d / "SKILL.md").is_file():
+            return d / "SKILL.md"
+        fp = _SKILLS_DIR / f"{name}.md"
+        return fp if fp.is_file() else None
 
     async def _api_skill_get(self, request: web.Request) -> web.Response:
         name = _safe_name(request.match_info["name"])
-        fp = _SKILLS_DIR / f"{name}.md"
-        if not fp.is_file():
+        fp = self._skill_file(name)
+        if fp is None:
             return web.json_response({"error": "not found"}, status=404)
         return web.json_response({"content": _read_text(fp)})
 
@@ -932,17 +966,24 @@ class QevosAPI:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "invalid JSON"}, status=400)
-        _SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-        (_SKILLS_DIR / f"{name}.md").write_text(body.get("content", ""), encoding="utf-8")
+        # Write SDK layout <name>/SKILL.md so the harness can load it.
+        fp = _SKILLS_DIR / name / "SKILL.md"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(body.get("content", ""), encoding="utf-8")
         return web.json_response({"ok": True})
 
     async def _api_skill_delete(self, request: web.Request) -> web.Response:
         name = _safe_name(request.match_info["name"])
-        fp = _SKILLS_DIR / f"{name}.md"
-        if fp.is_file():
+        fp = self._skill_file(name)
+        if fp is not None:
             fp.unlink()
+            try:
+                fp.parent.rmdir()  # remove now-empty <name>/ dir
+            except OSError:
+                pass  # dir not empty (extra files) — keep it
             return web.json_response({"ok": True})
         return web.json_response({"error": "not found"}, status=404)
+
 
     # ── Crons ────────────────────────────────────────────────────────────
 
