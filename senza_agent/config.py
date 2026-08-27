@@ -74,7 +74,11 @@ class Config:
 
 
 def _home() -> Path:
-    return Path(os.environ.get("HOME", "~")).expanduser()
+    # Windows uses USERPROFILE; Unix uses HOME.  Check both so the config
+    # directory is found correctly regardless of platform or shell (Git Bash
+    # sets HOME to a Unix-style path that confuses pathlib).
+    home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or "~"
+    return Path(home).expanduser()
 
 
 def _config_dir() -> Path:
