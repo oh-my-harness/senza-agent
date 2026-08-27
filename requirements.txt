@@ -6,4 +6,3 @@
 # and set SENZA_WHEEL env var before running setup_python.ps1.
 senza-sdk>=1.2.3
 aiohttp
-httpx

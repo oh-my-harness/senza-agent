@@ -240,18 +240,35 @@ def _should_bypass_proxy(base_url: str) -> bool:
     return False
 
 
-def _build_httpx_client(base_url: str):
-    """Build an ``httpx.Client`` with explicit proxy management."""
-    import httpx
+def _urlopen_no_env_proxy(url: str, headers: dict[str, str], timeout: int = 10):
+    """GET *url* using stdlib urllib, with explicit proxy control.
 
-    if _should_bypass_proxy(base_url):
-        return httpx.Client(trust_env=False)
-    proxy = (
-        os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
-        or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
-    )
-    return httpx.Client(proxy=proxy, trust_env=False) if proxy else httpx.Client(trust_env=False)
+    Replaces httpx — the probe only needs a simple GET /models, so the
+    standard library suffices and removes an extra dependency.
+    """
+    import urllib.request
+
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    bypass = _should_bypass_proxy(url)
+
+    if bypass:
+        # Direct connection — ignore proxy env vars entirely.
+        handler = urllib.request.ProxyHandler({})
+    else:
+        proxy = (
+            os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        )
+        if proxy:
+            handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        else:
+            handler = urllib.request.ProxyHandler()  # respect env (no-op)
+
+    opener = urllib.request.build_opener(handler)
+    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+    return opener.open(req, timeout=timeout)
 
 
 # ── Endpoint probing ──────────────────────────────────────────────────────────
@@ -271,22 +288,22 @@ def _probe_one_endpoint(base_url: str, api_key, model: str, list_models=None) ->
                 ids.append(str(mid))
         return ids
 
-    # Use httpx directly to avoid a hard dependency on the `openai` package.
-    import httpx
+    # Use stdlib urllib to avoid a hard dependency on httpx or the `openai` package.
+    import json as _json
+    import urllib.error
 
     url = base_url.rstrip("/") + "/models"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    client = _build_httpx_client(base_url)
     try:
-        resp = client.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
+        resp = _urlopen_no_env_proxy(url, headers, timeout=10)
+        body = resp.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Cannot connect to {base_url}. Error: HTTP {e.code} {e.reason}") from e
     except Exception as e:
         raise RuntimeError(f"Cannot connect to {base_url}. Error: {e}") from e
-    finally:
-        client.close()
 
     ids = []
-    for item in resp.json().get("data", []) or []:
+    for item in _json.loads(body).get("data", []) or []:
         mid = item.get("id") if isinstance(item, dict) else None
         if mid:
             ids.append(str(mid))
