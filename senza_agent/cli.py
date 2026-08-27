@@ -638,15 +638,20 @@ def main(argv: list[str] | None = None) -> int:
     # 1. Fault-tolerant stdio — before any print.
     install_fault_tolerant_stdio()
 
-    # 2 & 3. Load .env and set env defaults.
+    # 2. Load .env file (if present).
     load_dotenv_if_present()
-    ensure_env_defaults()
-    # 3b. Load dashboard-saved settings (~/.senza-agent/settings.json) into env.
+
+    # 3a. Load dashboard-saved settings (~/.senza-agent/settings.json) into env.
+    # Must happen BEFORE ensure_env_defaults so that OPENAI_BASE_URL etc.
+    # from settings.json are visible when slots are mapped.
     try:
         from senza_agent.config import load_settings_into_env
         load_settings_into_env()
     except Exception:
         pass
+
+    # 3b. Set env defaults and map standard OPENAI_* vars to slot prefixes.
+    ensure_env_defaults()
 
     # 4. Parse args.
     parser = build_parser()
