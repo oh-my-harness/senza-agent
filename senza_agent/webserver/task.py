@@ -112,7 +112,11 @@ class TaskManager:
 
         try:
             import senza
-            async for ev in senza.stream_prompt(self._harness, text, timeout_ms=30000):
+            async for ev in senza.stream_prompt(
+                self._harness, text,
+                timeout_ms=30000,
+                max_consecutive_timeouts=999999,
+            ):
                 if self._cancel_flag:
                     break
                 wire = self._normalize_event(ev)
