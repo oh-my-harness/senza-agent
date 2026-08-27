@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Run senza-agent from source on Windows — no build, no Node.js, no NSIS installer.
+    Run senza-agent from source on Windows — no build, no NSIS installer.
 
 .DESCRIPTION
     Creates a lightweight venv, pip-installs dependencies (senza-sdk + aiohttp),
-    then launches the senza-agent CLI / web dashboard directly from source.
+    then launches the senza-agent CLI / web dashboard / Electron desktop app.
 
     Prerequisites: Python 3.9+ (python.exe on PATH or detected via py launcher).
-    No Git, Node.js, or Electron needed.
+    Desktop mode additionally requires Node.js 18+.
 
 .PARAMETER Web
     Launch the web dashboard instead of the interactive CLI.
@@ -15,6 +15,10 @@
 
 .PARAMETER Port
     Port for the web dashboard (default 8090).  Ignored unless -Web is given.
+
+.PARAMETER Desktop
+    Launch the Electron desktop app.  This mode also requires Node.js 18+
+    (npm install is run automatically for electron dependencies).
 
 .PARAMETER Task
     Run a single task non-interactively, then exit.
@@ -24,7 +28,7 @@
     Skip venv creation — use the system Python directly.  Not recommended.
 
 .PARAMETER NoMirror
-    Don't use the China pip mirror (pypi.tuna.tsinghua.edu.cn).
+    Don't use the China pip / npm mirrors.
 
 .PARAMETER Python
     Path to a specific python.exe.  Overrides auto-detection.
@@ -33,6 +37,7 @@
     .\run.ps1                  # interactive CLI
     .\run.ps1 -Web             # web dashboard on port 8090
     .\run.ps1 -Web 9000        # web dashboard on port 9000
+    .\run.ps1 -Desktop         # Electron desktop app
     .\run.ps1 -Task "hello"    # single task, then exit
 
 .NOTES
@@ -41,6 +46,7 @@
 #>
 param(
     [switch]$Web,
+    [switch]$Desktop,
     [int]$Port = 8090,
     [string]$Task = "",
     [switch]$NoVenv,
@@ -139,10 +145,10 @@ if ($NoVenv) {
     $RunPy = $PyInVenv
 }
 
-# ── 4. Install dependencies ──────────────────────────────────────────
+# ── 4. Install Python dependencies ───────────────────────────────────
 
 # Always check / install — pip is fast if everything is already satisfied.
-Write-Step "Checking dependencies ..."
+Write-Step "Checking Python dependencies ..."
 
 $PipArgs = @("install", "-q")
 if (-not $NoMirror) {
@@ -161,14 +167,86 @@ if ($LASTEXITCODE -ne 0) {
     $PipArgs2 += "senza-sdk>=1.2.3", "aiohttp"
     & $RunPy -m pip @PipArgs2
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "Dependency installation failed."
+        Write-Err "Python dependency installation failed."
         Write-Host "    Try manually:  $RunPy -m pip install senza-sdk aiohttp"
         exit 1
     }
 }
-Write-OK "Dependencies ready"
+Write-OK "Python dependencies ready"
 
-# ── 5. Launch senza-agent ────────────────────────────────────────────
+# ── 5a. Desktop mode: ensure Node.js + electron deps, then npm start ──
+
+if ($Desktop) {
+    Write-Step "Checking Node.js for Electron desktop mode ..."
+
+    $nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+    if (-not $nodeExe) {
+        Write-Err "Node.js not found. Desktop mode requires Node.js 18+."
+        Write-Host "    Install from https://nodejs.org"
+        Write-Host "    Or use -Web for browser dashboard (no Node.js needed)."
+        exit 1
+    }
+    $nodeVer = & node --version 2>&1
+    Write-OK "Node.js $nodeVer at $nodeExe"
+
+    # npm mirror (China)
+    if (-not $NoMirror) {
+        Write-Step "Configuring npm mirror (npmmirror.com) ..."
+        npm config set registry https://registry.npmmirror.com 2>$null
+        $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+        $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
+        Write-OK "npm registry -> npmmirror.com"
+    }
+
+    # Install electron + electron-builder if not already present.
+    $DesktopDir = Join-Path $RepoRoot "desktop"
+    $NodeModules = Join-Path $DesktopDir "node_modules"
+    if (-not (Test-Path $NodeModules)) {
+        Write-Step "Installing Electron dependencies (first run, may take a few minutes) ..."
+    } else {
+        Write-Step "Updating Electron dependencies ..."
+    }
+
+    Push-Location $DesktopDir
+    try {
+        $npmCmd = if (Test-Path (Join-Path $DesktopDir "package-lock.json")) { "ci" } else { "install" }
+        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npm $npmCmd" `
+            -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+            Write-Err "npm $npmCmd failed (exit $($proc.ExitCode))."
+            Write-Host "    Try manually:  cd $DesktopDir; npm install"
+            exit 1
+        }
+        Write-OK "Electron dependencies installed"
+    } finally {
+        Pop-Location
+    }
+
+    # Launch Electron desktop app.
+    # main.js spawns `python -m senza_agent.cli --web PORT` internally,
+    # so we just need `npm start`.
+    Write-Step "Launching Electron desktop app ..."
+
+    Push-Location $DesktopDir
+    try {
+        # npx electron .  — runs the app from source without building.
+        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npx electron ." `
+            -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
+        $exitCode = $proc.ExitCode
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host ""
+    if ($exitCode -eq 0) {
+        Write-OK "Desktop app closed normally."
+    } else {
+        Write-Warn "Desktop app exited with code $exitCode"
+    }
+    exit $exitCode
+}
+
+# ── 5b. CLI / Web mode ───────────────────────────────────────────────
 
 Write-Step "Launching senza-agent ..."
 
