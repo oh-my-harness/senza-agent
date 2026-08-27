@@ -18,7 +18,7 @@ from aiohttp import web, WSMsgType
 class TaskManager:
     """Manages agent task execution and event streaming.
 
-    The harness runs in a background thread (via ``senza.stream_prompt``);
+    The harness runs in a background thread (via ``_sdk_compat.stream_prompt``);
     events are relayed to all connected WebSocket clients.
     """
 
@@ -111,8 +111,8 @@ class TaskManager:
         full_text: list[str] = []
 
         try:
-            import senza
-            async for ev in senza.stream_prompt(
+            from senza_agent._sdk_compat import stream_prompt
+            async for ev in stream_prompt(
                 self._harness, text,
                 timeout_ms=30000,
                 max_consecutive_timeouts=999999,
