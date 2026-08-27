@@ -63,6 +63,15 @@ function Write-OK([string]$msg)   { Write-Host "    OK  $msg" -ForegroundColor G
 function Write-Err([string]$msg)  { Write-Host "    ERR $msg" -ForegroundColor Red }
 function Write-Warn([string]$msg) { Write-Host "    !   $msg" -ForegroundColor Yellow }
 
+# ── 0. Force UTF-8 console (fixes emoji / Chinese garbled output on Windows) ──
+
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+chcp 65001 > $null 2>&1
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 # ── 1. Locate repo root ──────────────────────────────────────────────
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -210,7 +219,7 @@ if ($Desktop) {
     Push-Location $DesktopDir
     try {
         $npmCmd = if (Test-Path (Join-Path $DesktopDir "package-lock.json")) { "ci" } else { "install" }
-        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npm $npmCmd" `
+        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c chcp 65001 >nul && npm $npmCmd" `
             -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
         if ($proc.ExitCode -ne 0) {
             Write-Err "npm $npmCmd failed (exit $($proc.ExitCode))."
@@ -229,8 +238,7 @@ if ($Desktop) {
 
     Push-Location $DesktopDir
     try {
-        # npx electron .  — runs the app from source without building.
-        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c npx electron ." `
+        $proc = Start-Process -FilePath "cmd" -ArgumentList "/c chcp 65001 >nul && npx electron ." `
             -WorkingDirectory $DesktopDir -NoNewWindow -Wait -PassThru
         $exitCode = $proc.ExitCode
     } finally {
