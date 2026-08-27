@@ -558,7 +558,7 @@ class StateBridge:
         self._state["agentAlive"] = True
         run_id = f"run_{int(time.time())}"
         self._state["activeRunId"] = run_id
-        self._state["meta"] = {"_user_goal": text[:500], "goal": text[:500]}
+        self._state["meta"].update({"_user_goal": text[:500], "goal": text[:500]})
         await self.broadcast()
 
 # ── API Handlers ───────────────────────────────────────────────────────────
@@ -669,13 +669,14 @@ class QevosAPI:
         # If the agent is paused waiting for an ask_user answer, route the
         # user's text to the AskUserBridge instead of starting a new task.
         bridge = get_bridge()
+        awaiting = self._state.get("meta", {}).get("awaiting_input")
         # Race condition: the tool_execution_start event may set the dashboard
         # to "paused" state before bridge.ask() has set _active=True.  If the
         # state shows awaiting_input, briefly wait for the bridge to become
         # active rather than treating the answer as a new task.
-        if not bridge.is_active and self._state.get("meta", {}).get("awaiting_input"):
+        if not bridge.is_active and awaiting:
             import asyncio as _aio
-            for _ in range(20):  # up to ~2s
+            for _ in range(30):  # up to ~3s
                 await _aio.sleep(0.1)
                 if bridge.is_active:
                     break
@@ -683,7 +684,25 @@ class QevosAPI:
             accepted = bridge.provide_answer(command)
             if accepted:
                 return web.json_response({"ok": True, "ask_user_answer": True})
-            # Bridge became inactive between the check and the call — fall through
+            # Bridge became inactive between the check and the call.
+            # If awaiting_input is still set, don't start a new task —
+            # the agent is in an inconsistent state.
+            if awaiting:
+                return web.json_response({
+                    "ok": False,
+                    "error": "Agent is preparing a question, please wait a moment and retry.",
+                })
+        elif awaiting:
+            # The dashboard shows awaiting_input but the bridge never became
+            # active.  This means the agent's ask_user tool hasn't executed
+            # yet (still in spawn_blocking) or the stream already timed out.
+            # Do NOT fall through to on_followup/start_task — that would
+            # corrupt state and leave the agent permanently stuck.
+            return web.json_response({
+                "ok": False,
+                "error": "Agent is preparing a question, please wait a moment and retry.",
+            })
+        # No awaiting_input — treat as a normal follow-up message.
         # Strip /inject prefix — dashboard auto-prepends it for non-slash input
         if command.startswith("/inject "):
             command = command[len("/inject "):].strip()

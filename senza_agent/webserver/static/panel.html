@@ -4255,10 +4255,11 @@ async function sendCmd() {
   // and route it to _cmd_queue instead — the agent would never receive it.
   let cmd;
   if (isAwaitingInput(gState) && !raw.startsWith('/')) {
-    cmd = raw;   // plain text → _input_queue → ask_user answer
+    cmd = raw;   // plain text → ask_user answer
   } else {
     // Auto-prepend /inject if not a slash command
     cmd = raw.startsWith('/') ? raw : `/inject ${raw}`;
+  }
   try {
     const res = await postJsonWithRetry('/api/inject', { command: cmd, runId });
     const resBody = await res.json().catch(() => ({}));
