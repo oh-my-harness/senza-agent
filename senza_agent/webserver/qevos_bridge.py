@@ -665,11 +665,11 @@ class QevosAPI:
         logging.getLogger(__name__).info(
             "[_api_inject] command=%r bridge.is_active=%s awaiting_input=%r",
             command[:80], get_bridge().is_active,
-            self._state.get("meta", {}).get("awaiting_input"))
+            self.sb.state.get("meta", {}).get("awaiting_input"))
         # If the agent is paused waiting for an ask_user answer, route the
         # user's text to the AskUserBridge instead of starting a new task.
         bridge = get_bridge()
-        awaiting = self._state.get("meta", {}).get("awaiting_input")
+        awaiting = self.sb.state.get("meta", {}).get("awaiting_input")
         # Race condition: the tool_execution_start event may set the dashboard
         # to "paused" state before bridge.ask() has set _active=True.  If the
         # state shows awaiting_input, briefly wait for the bridge to become
