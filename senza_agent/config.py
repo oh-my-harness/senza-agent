@@ -31,7 +31,7 @@ class BehaviorConfig:
     advisor_model: Optional[str] = None
     budget_limit: float = 10.0
     wrapup_turns: int = 2
-    thinking_level: Optional[str] = None  # "none", "minimal", "low", "medium", "high"
+    thinking_level: Optional[str] = None  # "off", "minimal", "low", "medium", "high"
 
 
 @dataclass

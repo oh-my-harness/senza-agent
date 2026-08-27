@@ -127,8 +127,12 @@ def create_agent(config: Config) -> Any:
     )
 
     # ── Thinking level ─────────────────────────────────────────────────
-    if config.behavior.thinking_level:
-        builder = builder.thinking_level(config.behavior.thinking_level)
+    _tl = config.behavior.thinking_level
+    if _tl:
+        # Normalize legacy "none" → "off" (SDK expects "off").
+        if _tl.lower() == "none":
+            _tl = "off"
+        builder = builder.thinking_level(_tl)
 
     # ── Compaction tuning ──────────────────────────────────────────────
     cp = config.compaction
