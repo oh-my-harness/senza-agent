@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import time
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -660,10 +661,24 @@ class QevosAPI:
         command = (body.get("command") or "").strip()
         if not command:
             return web.json_response({"error": "command required"}, status=400)
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        logging.getLogger(__name__).info(
+            "[_api_inject] command=%r bridge.is_active=%s awaiting_input=%r",
+            command[:80], get_bridge().is_active,
+            self._state.get("meta", {}).get("awaiting_input"))
         # If the agent is paused waiting for an ask_user answer, route the
         # user's text to the AskUserBridge instead of starting a new task.
-        from senza_agent.webserver.ask_user_bridge import get_bridge
         bridge = get_bridge()
+        # Race condition: the tool_execution_start event may set the dashboard
+        # to "paused" state before bridge.ask() has set _active=True.  If the
+        # state shows awaiting_input, briefly wait for the bridge to become
+        # active rather than treating the answer as a new task.
+        if not bridge.is_active and self._state.get("meta", {}).get("awaiting_input"):
+            import asyncio as _aio
+            for _ in range(20):  # up to ~2s
+                await _aio.sleep(0.1)
+                if bridge.is_active:
+                    break
         if bridge.is_active:
             accepted = bridge.provide_answer(command)
             if accepted:

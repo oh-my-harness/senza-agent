@@ -4216,6 +4216,8 @@ async function sendCmd() {
   const input = document.getElementById('cmdInput');
   const raw   = input.value.trim();
   if (!raw) return;
+  console.log('[sendCmd] raw=%o awaiting=%o agentActive=%o nostopIdle=%o',
+    raw, isAwaitingInput(gState), gState && isAgentActive(gState), gState && isNostopIdle(gState));
 
   // Nostop idle: agent is alive waiting for next goal — plain text goes as raw
   // (unblocks get_user_input() in the nostop idle loop), slash commands route normally
@@ -4257,13 +4259,13 @@ async function sendCmd() {
   } else {
     // Auto-prepend /inject if not a slash command
     cmd = raw.startsWith('/') ? raw : `/inject ${raw}`;
-  }
-
   try {
     const res = await postJsonWithRetry('/api/inject', { command: cmd, runId });
+    const resBody = await res.json().catch(() => ({}));
+    console.log('[sendCmd] response status=%o body=%o', res.status, resBody);
     if (res.ok) { input.value = ''; toast(`✓ Sent: ${raw}`); }
-    else toast('✗ Server rejected the command');
-  } catch { toast('✗ Network error (retried)'); }
+    else toast('✗ Server rejected: ' + (resBody.error || ''));
+  } catch (e) { console.error('[sendCmd] error', e); toast('✗ Network error (retried)'); }
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────

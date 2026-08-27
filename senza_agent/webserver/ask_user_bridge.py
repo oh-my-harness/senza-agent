@@ -11,6 +11,7 @@ thread) and the web server (in the asyncio thread) can reach it.
 from __future__ import annotations
 
 import threading
+import logging
 from typing import Optional
 
 
@@ -47,9 +48,12 @@ class AskUserBridge:
             self._question = question
             self._answer = None
             self._event.clear()
+        logging.getLogger(__name__).info("[bridge.ask] question=%r _active=True, waiting...", question[:80])
 
         # Block until the web server calls provide_answer() or reset().
         self._event.wait()
+
+        logging.getLogger(__name__).info("[bridge.ask] unblocked, answer=%r", "<empty>" if not (self._answer or "") else (self._answer or "")[:80])
 
         with self._lock:
             self._active = False
@@ -66,8 +70,10 @@ class AskUserBridge:
         """
         with self._lock:
             if not self._active:
+                logging.getLogger(__name__).info("[bridge.provide_answer] NOT ACTIVE, rejected")
                 return False
             self._answer = text
+        logging.getLogger(__name__).info("[bridge.provide_answer] accepted answer=%r", text[:80])
         self._event.set()
         return True
 
