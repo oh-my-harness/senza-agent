@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from senza_agent.behavior.graph import ExecutionGraph
+from senza_agent.tools.registry import _adapt
 
 
 # ── Module-level graph instance ─────────────────────────────────────────────
@@ -182,7 +183,7 @@ def get_graph_tools() -> list:
                 "at a time; creating a new one abandons the previous."
             ),
             parameters=plan_create_params,
-            callback=lambda **kw: tool_plan_create(**kw),
+            callback=_adapt(tool_plan_create),
         ),
         senza.create_tool(
             name="plan_revise",
@@ -191,12 +192,12 @@ def get_graph_tools() -> list:
                 "(enter/exit/extend/fork/abandon/block/complete/update)."
             ),
             parameters=plan_revise_params,
-            callback=lambda **kw: tool_plan_revise(**kw),
+            callback=_adapt(tool_plan_revise),
         ),
         senza.create_tool(
             name="plan_abandon",
             description="Abandon the current execution graph entirely.",
             parameters=plan_abandon_params,
-            callback=lambda **kw: tool_plan_abandon(**kw),
+            callback=_adapt(tool_plan_abandon),
         ),
     ]

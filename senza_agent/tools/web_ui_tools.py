@@ -26,6 +26,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
+from senza_agent.tools.registry import _adapt
+
 
 # ══ Helpers ════════════════════════════════════════════════════════════════
 
@@ -494,7 +496,7 @@ def get_web_ui_tools() -> list:
             "title": {"type": "string", "description": "(optional) panel title"},
             "mode": {"type": "string", "description": "(optional) replace | append, default replace"},
         }, ["content"]),
-        callback=tool_web_show,
+        callback=_adapt(tool_web_show),
     ))
 
     tools.append(senza.create_tool(
@@ -504,7 +506,7 @@ def get_web_ui_tools() -> list:
             "message": "The message to send",
             "display_id": "(optional) target panel id, '*' = all (default)",
         }, ["message"]),
-        callback=tool_web_notify,
+        callback=_adapt(tool_web_notify),
     ))
 
     tools.append(senza.create_tool(
@@ -515,7 +517,7 @@ def get_web_ui_tools() -> list:
             "display_id": {"type": "string", "description": "(optional) target view, default 'default'"},
             "payload": {"type": "object", "description": "(optional) action-specific parameters: {url, selector, value, code, timeout}"},
         }, ["action"]),
-        callback=tool_web_interact,
+        callback=_adapt(tool_web_interact),
     ))
 
     # ── Terminal ──────────────────────────────────────────────────────────
@@ -525,7 +527,7 @@ def get_web_ui_tools() -> list:
         parameters=_str_schema({
             "title": "(optional) terminal title, default 'Agent'",
         }),
-        callback=tool_terminal_open,
+        callback=_adapt(tool_terminal_open),
     ))
 
     tools.append(senza.create_tool(
@@ -536,7 +538,7 @@ def get_web_ui_tools() -> list:
             "command": {"type": "string", "description": "Command to execute"},
             "timeout": {"type": "integer", "description": "(optional) max wait seconds, default 60"},
         }, ["id", "command"]),
-        callback=tool_terminal_run,
+        callback=_adapt(tool_terminal_run),
     ))
 
     tools.append(senza.create_tool(
@@ -547,7 +549,7 @@ def get_web_ui_tools() -> list:
             "text": {"type": "string", "description": "Text to send"},
             "submit": {"type": "boolean", "description": "(optional) append Enter, default true"},
         }, ["id", "text"]),
-        callback=tool_terminal_send,
+        callback=_adapt(tool_terminal_send),
     ))
 
     tools.append(senza.create_tool(
@@ -557,14 +559,14 @@ def get_web_ui_tools() -> list:
             "id": {"type": "string", "description": "Terminal session id"},
             "since": {"type": "integer", "description": "(optional) char offset, default 0"},
         }, ["id"]),
-        callback=tool_terminal_read,
+        callback=_adapt(tool_terminal_read),
     ))
 
     tools.append(senza.create_tool(
         name="terminal_list",
         description="List all terminal sessions (id / title / owner / alive).",
         parameters=_str_schema({}),
-        callback=tool_terminal_list,
+        callback=_adapt(tool_terminal_list),
     ))
 
     # ── File browser ──────────────────────────────────────────────────────
@@ -576,7 +578,7 @@ def get_web_ui_tools() -> list:
             "path": "Directory path (required for open/close)",
             "label": "(optional) tab label",
         }, ["action"]),
-        callback=tool_file_tab,
+        callback=_adapt(tool_file_tab),
     ))
 
     # ── Apps ──────────────────────────────────────────────────────────────
@@ -590,21 +592,21 @@ def get_web_ui_tools() -> list:
             "script": {"type": "string", "description": "Script body (plain code, no fences)"},
             "icon": {"type": "string", "description": "(optional) emoji icon, default 📦"},
         }, ["name", "description", "runtime", "script"]),
-        callback=tool_register_app,
+        callback=_adapt(tool_register_app),
     ))
 
     tools.append(senza.create_tool(
         name="list_apps",
         description="List all registered apps.",
         parameters=_str_schema({}),
-        callback=tool_list_apps,
+        callback=_adapt(tool_list_apps),
     ))
 
     tools.append(senza.create_tool(
         name="run_app",
         description="Run a registered app by name or id.",
         parameters=_str_schema({"name": "App id or name (without .md)"}, ["name"]),
-        callback=tool_run_app,
+        callback=_adapt(tool_run_app),
     ))
 
     return tools

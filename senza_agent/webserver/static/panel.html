@@ -7835,6 +7835,45 @@ fetch('/api/version').then(r => r.json()).then(d => {
   // First run: auto-open settings when no endpoint is configured yet.
   fetch('/api/env').then(r => r.json()).then(d => { if (d && !d.configured) openSettings(); }).catch(() => {});
 })();
+// ── Page visibility: pause non-critical timers when tab hidden ──────────────
+// Prevents backlog of setInterval callbacks firing at once when the window
+// regains focus (cause of the "flicker on refocus" issue on Windows).
+(function() {
+  let _savedElapsed = null;
+  const _savedJobTimers = {};
+  let _wasHidden = false;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      _wasHidden = true;
+      // Pause elapsed timer
+      if (gElapsedTimer) { clearInterval(gElapsedTimer); _savedElapsed = gElapsedStart; gElapsedTimer = null; }
+      // Pause job pollers
+      for (const jid in gJobPollers) { _savedJobTimers[jid] = gJobPollers[jid]; clearInterval(gJobPollers[jid]); delete gJobPollers[jid]; }
+    } else if (_wasHidden) {
+      _wasHidden = false;
+      // Resume elapsed timer
+      if (_savedElapsed !== null && !gElapsedTimer) {
+        gElapsedStart = _savedElapsed;
+        gElapsedTimer = setInterval(() => {
+          const el = document.getElementById('runPillLabel');
+          if (el && !gKillHolding) el.textContent = fmtElapsed(Date.now() - gElapsedStart);
+        }, 1000);
+      }
+      _savedElapsed = null;
+      // Resume job pollers
+      for (const jid in _savedJobTimers) {
+        if (!gJobPollers[jid]) {
+          gJobPollers[jid] = setInterval(() => {
+            if (gJobExpanded[jid]) fetchJobOutput(jid, gViewRunId);
+            else { clearInterval(gJobPollers[jid]); delete gJobPollers[jid]; }
+          }, 1000);
+        }
+        delete _savedJobTimers[jid];
+      }
+    }
+  });
+})();
 </script>
 </body>
 </html>

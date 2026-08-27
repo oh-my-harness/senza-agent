@@ -6,8 +6,68 @@ passed to ``senza.AgentHarness`` (or any Senza builder that accepts tools).
 
 from __future__ import annotations
 
+import functools
+import inspect
+from typing import Any, Callable
+
 import senza
 from . import standard
+
+
+def _adapt(callback: Callable) -> Callable:
+    """Wrap a tool callback so it receives unpacked kwargs from the args dict.
+
+    The Senza SDK's Rust layer always calls ``cb(args_dict, ctx)`` with two
+    positional arguments.  For callbacks declared as ``def tool(foo: str,
+    bar: int)`` this passes the *entire* args dict as ``foo`` and the ctx
+    object as ``bar`` — the dict is never unpacked into keyword arguments.
+
+    The SDK's own ``_wrap_tool_callback`` only helps 1-param callbacks (it
+    drops ``ctx``), but still passes the raw dict, so ``tool(question: str)``
+    receives ``question = {"question": "..."}`` instead of the string.
+
+    This adapter wraps *every* callback to accept ``(args: dict, ctx)`` and
+    unpack ``args`` as ``**kwargs`` before calling the real function.  It
+    also filters out keys that the real function doesn't accept, so extra
+    fields in the LLM's tool-call payload don't cause ``TypeError``.
+    """
+    try:
+        sig = inspect.signature(callback)
+    except (TypeError, ValueError):
+        # Builtins / C functions — assume it already takes (args, ctx).
+        return callback
+
+    params = sig.parameters
+    non_var = [p for p in params.values()
+               if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+
+    # Functions that already declare (args: dict, ctx) — no wrapping needed.
+    if len(non_var) >= 2:
+        p0_ann = non_var[0].annotation
+        if p0_ann is dict or p0_ann == dict or (
+            isinstance(p0_ann, str) and p0_ann == "dict"
+        ):
+            return callback
+
+    has_var_keyword = any(p.kind == p.VAR_KEYWORD for p in params.values())
+
+    accepted_names: set[str] | None = None
+    if not has_var_keyword:
+        accepted_names = {
+            name for name, p in params.items()
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        }
+
+    def _wrapped(args: dict, ctx: Any = None):
+        if not isinstance(args, dict):
+            # LLM passed a non-dict (string, etc.) — forward positionally.
+            return callback(args)
+        if has_var_keyword:
+            return callback(**args)
+        filtered = {k: v for k, v in args.items() if k in accepted_names}
+        return callback(**filtered)
+
+    return _wrapped
 
 
 def _str_schema(props: dict, required: list = None) -> dict:
@@ -46,7 +106,7 @@ def get_standard_tools() -> list:
         name="remember",
         description="Write an important conclusion to long-term memory for future reference.",
         parameters=_str_schema({"content": "The content to remember"}, ["content"]),
-        callback=standard.tool_remember,
+        callback=_adapt(standard.tool_remember),
     ))
     tools.append(senza.create_tool(
         name="raw_append",
@@ -55,7 +115,7 @@ def get_standard_tools() -> list:
             "content": "The raw content to append",
             "path": "(optional) file path; defaults to env RAW_MEMORY_PATH or ./raw_memory.ndjson",
         }, ["content"]),
-        callback=standard.tool_raw_append,
+        callback=_adapt(standard.tool_raw_append),
     ))
     tools.append(senza.create_tool(
         name="recall_history",
@@ -65,7 +125,7 @@ def get_standard_tools() -> list:
             "query": {"type": "string", "description": "(optional) keyword to filter"},
             "seg": {"type": "integer", "description": "(optional, default -1=current segment) segment number"},
         }),
-        callback=standard.tool_recall_history,
+        callback=_adapt(standard.tool_recall_history),
     ))
 
     # ── Scratchpad ──────────────────────────────────────────────────────────
@@ -73,19 +133,19 @@ def get_standard_tools() -> list:
         name="scratchpad_get",
         description="Read the current scratchpad (editable short-term working memory).",
         parameters=_str_schema({}),
-        callback=standard.tool_scratchpad_get,
+        callback=_adapt(standard.tool_scratchpad_get),
     ))
     tools.append(senza.create_tool(
         name="scratchpad_set",
         description="Overwrite the scratchpad (replaces existing content).",
         parameters=_str_schema({"content": "Scratchpad content"}, ["content"]),
-        callback=standard.tool_scratchpad_set,
+        callback=_adapt(standard.tool_scratchpad_set),
     ))
     tools.append(senza.create_tool(
         name="scratchpad_append",
         description="Append content to the scratchpad.",
         parameters=_str_schema({"content": "Content to append"}, ["content"]),
-        callback=standard.tool_scratchpad_append,
+        callback=_adapt(standard.tool_scratchpad_append),
     ))
 
     # ── Think / Goal ────────────────────────────────────────────────────────
@@ -93,7 +153,7 @@ def get_standard_tools() -> list:
         name="think",
         description="Record a thought for deep analysis and reasoning. Performs no external action.",
         parameters=_str_schema({"thought": "Your analysis content"}, ["thought"]),
-        callback=standard.tool_think,
+        callback=_adapt(standard.tool_think),
     ))
     tools.append(senza.create_tool(
         name="set_goal",
@@ -102,7 +162,7 @@ def get_standard_tools() -> list:
             "new_goal": "New goal description",
             "reason": "Reason for changing the goal",
         }, ["new_goal", "reason"]),
-        callback=standard.tool_set_goal,
+        callback=_adapt(standard.tool_set_goal),
     ))
 
     # ── File analysis ───────────────────────────────────────────────────────
@@ -110,7 +170,7 @@ def get_standard_tools() -> list:
         name="file_outline",
         description="Extract structural outline (classes, functions, methods with line numbers) without reading the full file.",
         parameters=_str_schema({"path": "File path"}, ["path"]),
-        callback=standard.tool_file_outline,
+        callback=_adapt(standard.tool_file_outline),
     ))
     tools.append(senza.create_tool(
         name="analyze_content",
@@ -121,7 +181,7 @@ def get_standard_tools() -> list:
             "model": {"type": "string", "description": "(optional) override model name"},
             "max_tokens": {"type": "integer", "description": "(optional) max output tokens, default 4000"},
         }, ["sources", "question"]),
-        callback=standard.tool_analyze_content,
+        callback=_adapt(standard.tool_analyze_content),
     ))
 
     # ── Completion / Advisor ────────────────────────────────────────────────
@@ -129,7 +189,7 @@ def get_standard_tools() -> list:
         name="request_advisor",
         description="Actively request the senior advisor to intervene immediately after this turn for an independent strategic review.",
         parameters=_str_schema({"reason": "(optional) reason for requesting guidance"}),
-        callback=standard.tool_request_advisor,
+        callback=_adapt(standard.tool_request_advisor),
     ))
     tools.append(senza.create_tool(
         name="consult_advisor",
@@ -140,7 +200,7 @@ def get_standard_tools() -> list:
             "model": {"type": "string", "description": "(optional) model name override"},
             "max_tokens": {"type": "integer", "description": "(optional) max output tokens, default 4096"},
         }, ["question"]),
-        callback=standard.tool_consult_advisor,
+        callback=_adapt(standard.tool_consult_advisor),
     ))
 
     # ── Evolved tools ───────────────────────────────────────────────────────
@@ -148,7 +208,7 @@ def get_standard_tools() -> list:
         name="save_tools",
         description="Save evolved tools and repair metadata to a standalone JSON file.",
         parameters=_str_schema({"path": "Tool file path (e.g. ./agent_tools.json)"}, ["path"]),
-        callback=standard.tool_save_tools,
+        callback=_adapt(standard.tool_save_tools),
     ))
     tools.append(senza.create_tool(
         name="load_tools",
@@ -157,7 +217,7 @@ def get_standard_tools() -> list:
             "path": {"type": "string", "description": "Tool file path"},
             "overwrite": {"type": "boolean", "description": "(optional) overwrite existing tools, default false"},
         }, ["path"]),
-        callback=standard.tool_load_tools,
+        callback=_adapt(standard.tool_load_tools),
     ))
     tools.append(senza.create_tool(
         name="append_episodic",
@@ -167,7 +227,7 @@ def get_standard_tools() -> list:
             "summary": {"type": "string", "description": "Summary paragraph (100-300 chars)"},
             "tags": {"type": "string", "description": "Comma-separated keywords for retrieval"},
         }, ["path", "summary"]),
-        callback=standard.tool_append_episodic,
+        callback=_adapt(standard.tool_append_episodic),
     ))
     tools.append(senza.create_tool(
         name="search_episodic",
@@ -177,7 +237,7 @@ def get_standard_tools() -> list:
             "keyword": {"type": "string", "description": "(optional) search keyword"},
             "limit": {"type": "integer", "description": "(optional) max results, default 20"},
         }, ["path"]),
-        callback=standard.tool_search_episodic,
+        callback=_adapt(standard.tool_search_episodic),
     ))
     tools.append(senza.create_tool(
         name="save_concept",
@@ -187,19 +247,19 @@ def get_standard_tools() -> list:
             "content": {"type": "string", "description": "Section content (section mode) or full Markdown (full mode)"},
             "section": {"type": "string", "description": "(recommended) section title to write/replace"},
         }, ["path", "content"]),
-        callback=standard.tool_save_concept,
+        callback=_adapt(standard.tool_save_concept),
     ))
     tools.append(senza.create_tool(
         name="read_concept",
         description="Read macro working memory file and load into state for system prompt injection.",
         parameters=_str_schema({"path": "Macro memory file path"}, ["path"]),
-        callback=standard.tool_read_concept,
+        callback=_adapt(standard.tool_read_concept),
     ))
     tools.append(senza.create_tool(
         name="persist_runtime_patches",
         description="Write accumulated runtime format patches to AGENTS.md for future runs.",
         parameters=_str_schema({"path": "(optional) AGENTS.md path, default ./AGENTS.md"}),
-        callback=standard.tool_persist_runtime_patches,
+        callback=_adapt(standard.tool_persist_runtime_patches),
     ))
     tools.append(senza.create_tool(
         name="validate_tool_recipe",
@@ -210,7 +270,7 @@ def get_standard_tools() -> list:
             "args_schema": {"type": "object", "description": "Parameter description dict"},
             "python_code": {"type": "string", "description": "Python code defining run(**kwargs)->dict"},
         }, ["name", "description", "args_schema", "python_code"]),
-        callback=standard.tool_validate_tool_recipe,
+        callback=_adapt(standard.tool_validate_tool_recipe),
     ))
     tools.append(senza.create_tool(
         name="repair_tool_candidate",
@@ -221,13 +281,13 @@ def get_standard_tools() -> list:
             "args_schema": {"type": "object", "description": "Repaired parameter description dict"},
             "python_code": {"type": "string", "description": "Repaired candidate Python code"},
         }, ["name", "description", "args_schema", "python_code"]),
-        callback=standard.tool_repair_tool_candidate,
+        callback=_adapt(standard.tool_repair_tool_candidate),
     ))
     tools.append(senza.create_tool(
         name="promote_tool_candidate",
         description="Promote a validated repair candidate into the formal tool registry.",
         parameters=_str_schema({"name": "Tool name to promote"}, ["name"]),
-        callback=standard.tool_promote_tool_candidate,
+        callback=_adapt(standard.tool_promote_tool_candidate),
     ))
     tools.append(senza.create_tool(
         name="register_tool",
@@ -238,7 +298,7 @@ def get_standard_tools() -> list:
             "args_schema": {"type": "object", "description": "Parameter description dict"},
             "python_code": {"type": "string", "description": "Python code defining run(**kwargs)->dict"},
         }, ["name", "description", "args_schema", "python_code"]),
-        callback=standard.tool_register_tool,
+        callback=_adapt(standard.tool_register_tool),
     ))
     tools.append(senza.create_tool(
         name="delete_tool",
@@ -247,7 +307,7 @@ def get_standard_tools() -> list:
             "name": {"type": "string", "description": "Tool name to delete"},
             "confirm": {"type": "boolean", "description": "False=preview (default), True=execute deletion"},
         }, ["name"]),
-        callback=standard.tool_delete_tool,
+        callback=_adapt(standard.tool_delete_tool),
     ))
 
     # ── Async background tasks ──────────────────────────────────────────────
@@ -258,7 +318,7 @@ def get_standard_tools() -> list:
             "command": {"type": "string", "description": "Shell command to execute"},
             "timeout": {"type": "integer", "description": "(optional) max seconds, 0 = unlimited"},
         }, ["command"]),
-        callback=standard.tool_shell_bg,
+        callback=_adapt(standard.tool_shell_bg),
     ))
     tools.append(senza.create_tool(
         name="job_wait",
@@ -267,19 +327,19 @@ def get_standard_tools() -> list:
             "job_id": {"type": "string", "description": "Job ID from shell_bg"},
             "wait": {"type": "integer", "description": "(optional) max wait seconds, default 10"},
         }, ["job_id"]),
-        callback=standard.tool_job_wait,
+        callback=_adapt(standard.tool_job_wait),
     ))
     tools.append(senza.create_tool(
         name="job_cancel",
         description="Force-terminate a running background job (kills the entire process tree).",
         parameters=_str_schema({"job_id": "Job ID from shell_bg"}, ["job_id"]),
-        callback=standard.tool_job_cancel,
+        callback=_adapt(standard.tool_job_cancel),
     ))
     tools.append(senza.create_tool(
         name="jobs_list",
         description="List all background jobs and their current status.",
         parameters=_str_schema({}),
-        callback=standard.tool_jobs_list,
+        callback=_adapt(standard.tool_jobs_list),
     ))
 
     # ── Environment watchers ────────────────────────────────────────────────
@@ -295,25 +355,25 @@ def get_standard_tools() -> list:
             "enabled": {"type": "boolean", "description": "(optional) enabled, default true"},
             "desc": {"type": "string", "description": "(optional) description"},
         }, ["name", "path"]),
-        callback=standard.tool_watch_register,
+        callback=_adapt(standard.tool_watch_register),
     ))
     tools.append(senza.create_tool(
         name="watch_unregister",
         description="Unregister a watcher (code file is not deleted).",
         parameters=_str_schema({"name": "Watcher name"}, ["name"]),
-        callback=standard.tool_watch_unregister,
+        callback=_adapt(standard.tool_watch_unregister),
     ))
     tools.append(senza.create_tool(
         name="watch_enable",
         description="Enable a registered watcher.",
         parameters=_str_schema({"name": "Watcher name"}, ["name"]),
-        callback=standard.tool_watch_enable,
+        callback=_adapt(standard.tool_watch_enable),
     ))
     tools.append(senza.create_tool(
         name="watch_disable",
         description="Disable a watcher (entry is kept, just not scheduled).",
         parameters=_str_schema({"name": "Watcher name"}, ["name"]),
-        callback=standard.tool_watch_disable,
+        callback=_adapt(standard.tool_watch_disable),
     ))
     tools.append(senza.create_tool(
         name="watch_update",
@@ -327,13 +387,13 @@ def get_standard_tools() -> list:
             "desc": {"type": "string", "description": "(optional) new description"},
             "path": {"type": "string", "description": "(optional) new code file path"},
         }, ["name"]),
-        callback=standard.tool_watch_update,
+        callback=_adapt(standard.tool_watch_update),
     ))
     tools.append(senza.create_tool(
         name="watch_list",
         description="List all registered watchers and their status.",
         parameters=_str_schema({}),
-        callback=standard.tool_watch_list,
+        callback=_adapt(standard.tool_watch_list),
     ))
 
     # ── Environment info ────────────────────────────────────────────────────
@@ -341,7 +401,7 @@ def get_standard_tools() -> list:
         name="get_env_info",
         description="Get basic environment info: current datetime and working directory.",
         parameters=_str_schema({}),
-        callback=standard.tool_get_env_info,
+        callback=_adapt(standard.tool_get_env_info),
     ))
 
     # ── Image / video ───────────────────────────────────────────────────────
@@ -352,7 +412,7 @@ def get_standard_tools() -> list:
             "path": "Image path (local file or http/https URL)",
             "caption": "(optional) caption text injected before the image",
         }, ["path"]),
-        callback=standard.tool_load_image,
+        callback=_adapt(standard.tool_load_image),
     ))
     tools.append(senza.create_tool(
         name="load_video",
@@ -365,7 +425,7 @@ def get_standard_tools() -> list:
             "end_time": {"type": "number", "description": "(optional) end time seconds, default -1 = end"},
             "caption": {"type": "string", "description": "(optional) caption text"},
         }, ["path"]),
-        callback=standard.tool_load_video,
+        callback=_adapt(standard.tool_load_video),
     ))
 
     # ── Ask user ─────────────────────────────────────────────────────────────
@@ -377,7 +437,7 @@ def get_standard_tools() -> list:
             "that only the user can provide. The agent pauses until the user responds."
         ),
         parameters=_str_schema({"question": "The question to ask the user"}, ["question"]),
-        callback=standard.tool_ask_user,
+        callback=_adapt(standard.tool_ask_user),
     ))
 
     # ── SSH ─────────────────────────────────────────────────────────────────
@@ -394,7 +454,7 @@ def get_standard_tools() -> list:
             "key_file": {"type": "string", "description": "(optional) SSH private key file path"},
             "sudo_password": {"type": "string", "description": "(optional) sudo password"},
         }, ["host", "username", "command"]),
-        callback=standard.tool_ssh_execute,
+        callback=_adapt(standard.tool_ssh_execute),
     ))
 
     return tools
