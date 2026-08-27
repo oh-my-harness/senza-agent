@@ -1,3 +1,8 @@
+---
+name: tscircuit
+description: 电子电路设计、PCB 布局、硬件原型开发
+---
+
 # SKILL: tscircuit 电路设计
 
 适用领域：电子电路设计、PCB 布局、硬件原型开发。

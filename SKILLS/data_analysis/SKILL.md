@@ -1,3 +1,8 @@
+---
+name: data-analysis
+description: 数据处理、统计分析、可视化、机器学习、ETL
+---
+
 # SKILL: 数据分析
 
 适用领域：数据处理、统计分析、可视化、机器学习、ETL。

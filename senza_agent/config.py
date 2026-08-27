@@ -225,10 +225,20 @@ def _apply_derived(cfg: Config) -> None:
     if not cfg.audit_path:
         cfg.audit_path = str(cdir / "audit.jsonl")
     if not cfg.skills_dir:
-        candidate = Path("senza-agent") / "SKILLS"
-        if candidate.is_dir():
-            cfg.skills_dir = str(candidate.resolve())
-
+        # Candidates, in priority order:
+        #   1. $SENZA_AGENT_DIR/SKILLS   (set by desktop/main.js and CLI wrappers)
+        #   2. <repo root>/SKILLS        (resolved relative to this package)
+        #   3. ./senza-agent/SKILLS      (legacy: relative to cwd when run from ~)
+        candidates = []
+        agent_dir = os.environ.get("SENZA_AGENT_DIR")
+        if agent_dir:
+            candidates.append(Path(agent_dir) / "SKILLS")
+        candidates.append(Path(__file__).resolve().parent.parent / "SKILLS")
+        candidates.append(Path("senza-agent") / "SKILLS")
+        for candidate in candidates:
+            if candidate.is_dir():
+                cfg.skills_dir = str(candidate.resolve())
+                break
 
 def load_config() -> Config:
     """Load configuration from ``~/.senza-agent/config.json`` then apply env overrides.
@@ -236,7 +246,7 @@ def load_config() -> Config:
     Derived paths are filled last:
       - ``sessions_dir`` → ``~/.senza-agent/sessions/``
       - ``audit_path`` → ``~/.senza-agent/audit.jsonl``
-      - ``skills_dir`` → ``senza-agent/SKILLS/`` if it exists
+      - ``skills_dir`` → ``$SENZA_AGENT_DIR/SKILLS`` or ``<repo root>/SKILLS/`` if it exists
     """
     cfg = Config()
     _apply_file(cfg, _load_file())

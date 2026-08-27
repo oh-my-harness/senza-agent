@@ -1,3 +1,8 @@
+---
+name: ui-app
+description: 在 QevosAgent 内部构建带图形界面与 Agent 能力的交互式应用（流程图/节点图编辑器等）
+---
+
 # SKILL: 构建内置 UI App(交互式图形应用)
 
 适用领域：在 QevosAgent 内部构建**带图形界面 + Agent 能力**的应用——例如流程图/节点图编辑器、

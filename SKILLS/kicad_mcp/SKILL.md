@@ -1,3 +1,8 @@
+---
+name: kicad-mcp
+description: PCB 设计、硬件原型开发、电子电路自动化
+---
+
 # SKILL: KiCAD MCP 电路设计
 
 适用领域：PCB 设计、硬件原型开发、电子电路自动化。
