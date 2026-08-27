@@ -10,6 +10,7 @@ requires-python = ">=3.9"
 dependencies = [
     "senza-sdk>=1.2.3",
     "aiohttp",
+    "httpx",
 ]
 
 [project.scripts]
