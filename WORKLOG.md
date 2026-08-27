@@ -99,3 +99,46 @@
 ### 遗留项
 - 面板勾选 skill 后 `/api/launch` 仍丢弃 `skills` 字段（`_api_launch` 只取 goal），
   即面板的"激活 skill"勾选尚不影响 SDK 启动配置 —— 下一个可选项。
+
+## 2026-08-27 | web_search 修复：默认 duckduckgo 被墙，切换 bing provider（纯配置）
+
+### 问题
+用户报告 web_fetch 可用、web_search 不可用。排查定论：两者同属 SDK（llm-harness-tools）
+的 WebToolsPlugin，fetch 正常是因为只抓用户给定 URL；search 默认 provider=duckduckgo
+（先 POST lite.duckduckgo.com/lite/，空结果再 GET duckduckgo.com/html/），本机这两个
+域名全部不可达（curl 实测 HTTP 000 连接失败，GFW）。
+
+### 三方实现对比（用户问的 qevosagent / omp 调查结论）
+- QevosAgent `agent/tools/standard.py:1934 tool_web_search`：单实现，`ddgs` 库
+  （requirements.txt:6），`DDGS().text(query)` 取 title/href/body。无 provider 抽象、
+  无代理支持；ddgs 底层同样打 lite/html.duckduckgo.com，在本机网络下也会挂。
+- omp（Bun 单文件二进制，源码 packages/coding-agent/src/web/search/）：26 个 provider，
+  每个 isAvailable/isExplicitlyAvailable/search；显式指定→不可用回落 auto；auto 按
+  SEARCH_PROVIDER_ORDER 找第一个可用，执行失败逐个 try 下一个。免 key 类=HTML 抓取
+  （bing GET /search?q=&count=&mkt=en-US 解析 li.b_algo + .b_caption p、duckduckgo、
+  yahoo、ecosia、startpage、mojeek），带 key 类=perplexity(可匿名)/gemini/anthropic/
+  codex/exa/tavily/brave/kagi/jina/kimi/searxng 等；共用 fetcher 失败或命中 bot
+  challenge 时自动起 headless Puppeteer 真浏览器重试；支持 HTTPS_PROXY。
+- senza SDK（llm-harness-tools web_search.rs，1015 行）：同 provider 路由设计，
+  duckduckgo/bing/brave/tavily/serper/serpapi/exa/searxng/google_cse。**bing 分支
+  GET base_url?q= + 解析 b_algo，免 API key**——与 omp 免 key bing 抓取同款思路。
+
+### 修复（零代码，纯配置）
+SDK 的 config 经 `senza_agent/agent.py _web_config_dict` ← `config.py load_config`
+← `~/.senza-agent/config.json` 的 `web` 段（`_apply_file` 已支持）。写入：
+```json
+{"web": {"provider": "bing", "base_url": "https://www.bing.com/search"}}
+```
+
+### 验证
+- `load_config()._web_config_dict()` → provider=bing, base_url 正确；
+  `senza.create_web_search_tool(cfg)` 构造成功。
+- 按 Rust search_bing 同款算法（UA/Accept-Language/GET base_url?q=）Python 移植实测：
+  www.bing.com 与 cn.bing.com 均返回 b_algo×10，解析出真实搜索结果（如 "Kimi AI 官网"）。
+  www/cn 两域可达性都已确认。
+
+### 踩坑与结论
+- SDK NativeTool 不暴露 Python 调用入口（execute 在 Rust 侧由 harness 调度），
+  行为验证只能走"同参数请求+同解析算法"的移植模拟，可信度足够（解析器逐行对照过）。
+- bing provider 无 API key 要求，免 key；若未来 bing 出验证码，SDK 会报
+  web_search_failed——届时可考虑加 searxng 自建或带 key provider。
