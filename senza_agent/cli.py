@@ -82,6 +82,21 @@ def install_fault_tolerant_stdio():
     Idempotent and never raises — a failure here must not block startup.
     Call once, before any console output.
     """
+    # Enable ANSI escape code processing on Windows 10+ (cmd.exe / PowerShell
+    # default to disabled, causing \033[9Xm to show as literal text).
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+            for _handle in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+                handle = kernel32.GetStdHandle(_handle)
+                mode = ctypes.c_uint32()
+                if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                    kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except Exception:
+            pass
+
     try:
         if not isinstance(sys.stdout, _FaultTolerantTextIO):
             sys.stdout = _FaultTolerantTextIO(sys.stdout)
