@@ -72,3 +72,30 @@
 - senza-agent main 曾推不上去（git 端点 60–300s 挂起、Authentication failed），原因是
   credential.helper=store 里的旧 token 干扰；`-c http.extraheader="Authorization: Basic <b64
   (x-access-token:token)>"` + `-c credential.helper=` 推送成功，远程 main 已到 `1a100a4`。
+
+## 2026-08-27 | 面板 Skills 标签接通 SDK SKILLS/ 目录
+
+### 问题
+桌面端面板 Skills 标签空白：`qevos_bridge.py` 的 skills 接口读
+`SENZA_AGENT_DIR/skills/`（小写、平铺 *.md），该目录根本不存在；
+而 SDK 实际加载的是 `SENZA_AGENT_DIR/SKILLS/<name>/SKILL.md`（大写、目录布局）。
+两套体系此前互不相通（早期调查已记录为遗留项）。
+
+### 做法
+- `_SKILLS_DIR` 改指 `_AGENT_DIR / "SKILLS"`（与 SDK 同一目录）。
+- `_api_skills_list`：列 `<name>/SKILL.md`（平铺旧 .md 仍兼容显示）；
+  description 优先取 frontmatter 的 `description:` 字段（跳过 YAML 块），
+  兜底取正文第一行非注释文本。
+- `_api_skill_get`：`<name>/SKILL.md` 优先，平铺 `name.md` 兜底（`_skill_file` 辅助）。
+- `_api_skill_post`：面板新建的 skill 写为 SDK 布局 `<name>/SKILL.md`，SDK 能直接加载。
+- `_api_skill_delete`：删 SKILL.md 后清理空目录（目录含额外文件时保留目录）。
+
+### 验证
+- 对真实 SKILLS/ 目录冒烟：列表 7 个且描述全部正确取自 frontmatter；
+  POST/GET/DELETE 往返；空目录清理；含额外文件的目录只删 SKILL.md；
+  平铺旧格式 list/get/delete 兼容；不存在 → 404。
+- pytest：247 passed（3 个失败为已知存量 create_tool parameters 问题）。
+
+### 遗留项
+- 面板勾选 skill 后 `/api/launch` 仍丢弃 `skills` 字段（`_api_launch` 只取 goal），
+  即面板的"激活 skill"勾选尚不影响 SDK 启动配置 —— 下一个可选项。
