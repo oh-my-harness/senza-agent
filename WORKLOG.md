@@ -142,3 +142,23 @@ SDK 的 config 经 `senza_agent/agent.py _web_config_dict` ← `config.py load_c
   行为验证只能走"同参数请求+同解析算法"的移植模拟，可信度足够（解析器逐行对照过）。
 - bing provider 无 API key 要求，免 key；若未来 bing 出验证码，SDK 会报
   web_search_failed——届时可考虑加 searxng 自建或带 key provider。
+
+## 2026-08-27 | WebConfig 默认值改为 bing（代码层修复）
+
+### 为什么改代码
+用户指出：duckduckgo 默认值硬编码在 `config.py:18 WebConfig.provider`，只改本机
+config.json 修不了其他用户/Windows 机器——新装环境无 config.json 仍会走 DDG 被墙。
+默认值本身就该是"开箱可用"的，故改源码默认。
+
+### 改动
+- `senza_agent/config.py WebConfig`：`provider = "duckduckgo"` → `"bing"`，
+  `base_url = ""` → `"https://www.bing.com/search"`（附一行原因注释）。
+  base_url 显式给出是因为 SDK 的 bing provider GET 该 URL + ?q=，而默认空串/旧 DDG
+  值对 bing 无意义。
+- `tests/test_config.py::test_config_defaults`：断言同步改为 bing + 端点。
+- `~/.senza-agent/config.json` 保留（内容现与默认一致，无害，作为显式记录）。
+
+### 验证
+- `pytest tests/test_config.py` 3 passed。
+- 全量基线：247 passed / 3 failed（均为存量 create_tool parameters 问题，与本次无关）。
+- 仓库内 `duckduckgo` 字面量清零（仅剩注释里的原因说明）。

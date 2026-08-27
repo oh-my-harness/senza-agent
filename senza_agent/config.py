@@ -15,8 +15,10 @@ from typing import Any, Optional
 class WebConfig:
     """Web search/fetch tool configuration."""
 
-    provider: str = "duckduckgo"
-    base_url: str = ""
+    # duckduckgo is unreachable from CN networks (lite/html endpoints blocked);
+    # bing needs no API key and is reachable from both CN and international egress.
+    provider: str = "bing"
+    base_url: str = "https://www.bing.com/search"
     api_key: Optional[str] = None
     max_results: int = 5
     fetch_timeout_secs: int = 12

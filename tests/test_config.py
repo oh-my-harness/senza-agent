@@ -20,7 +20,8 @@ def test_config_defaults(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.model == "gpt-4o"
     assert cfg.api_key == ""
-    assert cfg.web.provider == "duckduckgo"
+    assert cfg.web.provider == "bing"
+    assert cfg.web.base_url == "https://www.bing.com/search"
     assert cfg.behavior.advisor_interval == 15
 
 
