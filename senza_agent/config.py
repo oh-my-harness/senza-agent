@@ -285,6 +285,15 @@ def load_settings_into_env() -> None:
     if not isinstance(data, dict):
         return
     for key, val in data.items():
+        if isinstance(val, dict):
+            # Nested objects (e.g. behavior, compaction) — expand sub-keys
+            # into SENZA_AGENT_<SUBKEY> env vars, mirroring save_settings.
+            for sub_key, sub_val in val.items():
+                ssub = str(sub_val).strip() if sub_val is not None else ""
+                env_key = f"SENZA_AGENT_{sub_key.upper()}"
+                if ssub and env_key not in os.environ:
+                    os.environ[env_key] = ssub
+            continue
         if isinstance(val, str) and val and key not in os.environ:
             os.environ[key] = val
 
