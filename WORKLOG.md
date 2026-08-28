@@ -549,3 +549,8 @@ CI run 33159967448 success（~1 分钟）；draft 378384199（exe + latest.yml�
 - electron-updater 依赖保留（检查/下载/安装仍由它完成），仅去掉自动触发。
 
 验证：node -c 通过；mock electron 测试覆盖四条路径（有新版全流程/已最新/网络错误/About 结构与菜单构建）全部通过；真实 electron 无头启动到 Dashboard 正常。
+
+## 2026-08-28 | v0.1.3 发布完成
+
+CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml）已公开发布，孤儿 draft 378391524（仅 blockmap）已删除（204）。公开发布时间 2026-08-28T09:47:46Z。URL: https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.3
+注意：latest.yml 仍随 release 发布（electron-builder 固定产物），但 v0.1.3 应用内已无自动更新触发点，该文件仅供手动安装的 electron-updater 工具或未来需要时使用。
