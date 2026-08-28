@@ -23,7 +23,7 @@
  */
 
 const { app, BrowserWindow, shell, nativeImage, Menu, dialog, ipcMain } = require('electron');
-const { autoUpdater } = require('electron-updater');
+const { autoUpdater, CancellationToken } = require('electron-updater');
 const path = require('path');
 const http = require('http');
 const net  = require('net');
@@ -402,6 +402,62 @@ ipcMain.handle('desktop:pick-folder', async (event) => {
   return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 });
 
+// ── Update download progress window ─────────────────────────────────────────
+//
+// Small always-on-top window shown while the update package downloads.
+// Mirrors the startup loading window style; carries a determinate bar driven
+// by electron-updater's "download-progress" events plus a Cancel button that
+// aborts the transfer via CancellationToken.
+
+let _updateProgressWin = null;
+
+function _execInProgressWin(js) {
+  if (_updateProgressWin && !_updateProgressWin.isDestroyed()) {
+    _updateProgressWin.webContents.executeJavaScript(js).catch(() => {});
+  }
+}
+
+function showUpdateProgressWindow(version) {
+  _updateProgressWin = new BrowserWindow({
+    width: 420, height: 190, frame: false, resizable: false,
+    title: 'senza-agent 更新', backgroundColor: '#0d1117',
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  _updateProgressWin.loadURL('data:text/html,' + encodeURIComponent(
+    `<div style="font-family:system-ui;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">` +
+    `<div style="font-size:16px;font-weight:600;">正在下载 v${version}</div>` +
+    `<div style="width:300px;height:6px;background:#21262d;border-radius:3px;overflow:hidden;">` +
+    `<div id="bar" style="width:0%;height:100%;background:#58a6ff;border-radius:3px;transition:width 0.2s ease;"></div></div>` +
+    `<div id="pct" style="font-size:13px;color:#8b949e;">准备下载…</div>` +
+    `<button id="cancel" style="margin-top:4px;padding:5px 18px;font-size:13px;color:#c9d1d9;background:#21262d;border:1px solid #30363d;border-radius:6px;cursor:pointer;">取消</button>` +
+    `</div>`));
+  return _updateProgressWin;
+}
+
+function setUpdateProgress(info) {
+  const pct = Math.max(0, Math.min(100, Math.round(info.percent || 0)));
+  const mb = (n) => (n / 1024 / 1024).toFixed(1);
+  _execInProgressWin(
+    `document.getElementById('bar').style.width = '${pct}%';` +
+    `document.getElementById('pct').textContent = ${JSON.stringify(
+      `${pct}%（${mb(info.transferred)}/${mb(info.total)} MB，${mb(info.bytesPerSecond)} MB/s）`
+    )};`
+  );
+}
+
+function setUpdateProgressDone() {
+  _execInProgressWin(
+    `document.getElementById('bar').style.width = '100%';` +
+    `document.getElementById('pct').textContent = '下载完成，正在准备安装…';` +
+    `document.getElementById('cancel').style.display = 'none';`
+  );
+}
+
+function closeUpdateProgressWindow() {
+  if (_updateProgressWin && !_updateProgressWin.isDestroyed()) _updateProgressWin.close();
+  _updateProgressWin = null;
+}
+
 // ── Update check (manual, from the app menu) ───────────────────────────────
 //
 // No background polling and no automatic download: updates are only checked
@@ -439,7 +495,31 @@ async function checkForUpdatesInteractive(win) {
     });
     if (hasUpdate && r.response === 0) {
       autoUpdater.autoDownload = true;
-      await autoUpdater.downloadUpdate();
+      const token = new CancellationToken();
+      showUpdateProgressWindow(latest);
+
+      // Cancel button inside the progress window aborts the transfer.
+      _execInProgressWin(
+        `document.getElementById('cancel').onclick = () => require('electron').ipcRenderer.send('desktop:cancel-update');`
+      );
+      ipcMain.once('desktop:cancel-update', () => {
+        token.cancel();
+      });
+
+      const onProgress = (info) => setUpdateProgress(info);
+      autoUpdater.on('download-progress', onProgress);
+      try {
+        await autoUpdater.downloadUpdate(token);
+      } catch (dlErr) {
+        // A user cancel rejects with "cancelled"; anything else is real.
+        if (!token.cancelled) throw dlErr;
+      } finally {
+        autoUpdater.removeListener('download-progress', onProgress);
+        closeUpdateProgressWindow();
+      }
+      if (token.cancelled) return;
+
+      setUpdateProgressDone();
       const d = await dialog.showMessageBox(win, {
         type: 'info',
         message: `v${latest} 已下载完成`,

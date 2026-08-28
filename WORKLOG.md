@@ -580,3 +580,25 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 ### 遗留项
 
 - 桌面端用户升级到 v0.1.4 后，旧安装目录里的 `resources\runs` 归档不会自动迁移（新归档写到 `~\.senza-agent\runs`）。
+
+## 2026-08-28 | v0.1.5：更新下载进度窗口
+
+### 本次做了什么
+
+用户要求"下载更新并安装时提供进度显示"。此前点「下载并安装」后界面无任何反馈（82MB 安装包下载期间静默），用户不知道是否在工作。本次在 `desktop/main.js` 增加：
+
+1. **进度窗口 `showUpdateProgressWindow(version)`**：420×190 无边框深色小窗（复用启动 loading 窗的视觉风格），含标题"正在下载 vX"、蓝色确定性进度条、`pct% (已传/总量 MB, 速度 MB/s)` 文本、以及「取消」按钮。
+2. **进度驱动**：electron-updater 原生 `download-progress` 事件（`ProgressInfo{percent,transferred,total,bytesPerSecond}`）→ `executeJavaScript` 更新 DOM；监听器在下载结束/异常/取消后均 `removeListener`，不泄漏。
+3. **取消**：窗口按钮经 `ipcRenderer.send('desktop:cancel-update')` → `ipcMain.once` → `CancellationToken.cancel()`；`downloadUpdate(token)` 抛 cancelled 错误被识别（`token.cancelled` 判断）后静默返回，不弹错误框。CancellationToken 从 `electron-updater` 导入（已确认其 JS 导出面包含该类）。
+4. **收尾**：下载完成先显示"100% 下载完成，正在准备安装…"再弹重启确认；取消或完成后窗口均关闭。`quitAndInstall(false,true)` 时序不变。
+
+### 验证（/tmp/eb-progress-mock，mock electron + electron-updater）
+
+- happy：进度条 5%→100% 逐步更新、百分比文本正确（MB/s 计算）、cancel IPC 注册、完成后窗口关闭、`quitAndInstall(false,true)` 被调用 ✓
+- cancel：下载中途（模拟 60ms 后点击取消按钮走真实 IPC 通道）token 取消、下载中断、窗口关闭、**不弹**重启对话框 ✓
+- later：用户选"以后再说"则完全不创建进度窗口 ✓
+- 测试侧踩坑：假下载 20ms 就跑完，60ms 才点的取消永远输——把假下载放慢（30ms/步）并在步进间检查 `token.cancelled` 才复现真实竞态下的取消语义。
+
+### 遗留项
+
+- 进度窗口在真实 Windows 上需肉眼确认视觉（无边框窗口无关闭按钮，仅靠取消按钮/自动关闭退出，属预期）。
