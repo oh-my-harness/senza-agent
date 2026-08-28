@@ -531,3 +531,108 @@ class TestWebServerRoutes:
         data = await resp.json()
         # playwright not installed in test env → error
         assert "error" in data or "ok" in data
+
+
+# ── Dashboard access control (DASHBOARD_ALLOW / DASHBOARD_DENY) ─────────────
+
+class TestDashboardACL:
+    """Access-control middleware: deny wins over allow, loopback always passes,
+    empty lists = no enforcement. Lists are re-read from env per request."""
+
+    def _setup_env(self, monkeypatch, allow="", deny=""):
+        import os as _os
+        for k in ("DASHBOARD_ALLOW", "DASHBOARD_DENY"):
+            monkeypatch.delenv(k, raising=False)
+        if allow:
+            monkeypatch.setenv("DASHBOARD_ALLOW", allow)
+        if deny:
+            monkeypatch.setenv("DASHBOARD_DENY", deny)
+
+    # pure decision function
+    def test_parse_networks(self):
+        from senza_agent.webserver.app import _parse_networks
+        import ipaddress
+        nets = _parse_networks("192.168.1.0/24, 10.0.0.5, garbage,,")
+        assert nets == [ipaddress.ip_network("192.168.1.0/24"),
+                        ipaddress.ip_network("10.0.0.5/32")]
+
+    def test_loopback_always_allowed_even_when_denied(self):
+        from senza_agent.webserver.app import _acl_allows, _parse_networks
+        import ipaddress
+        peer = ipaddress.ip_address("127.0.0.1")
+        assert _acl_allows(peer, [], _parse_networks("127.0.0.0/8"))
+        assert _acl_allows(peer, _parse_networks("10.0.0.0/8"), [])
+
+    def test_deny_wins_over_allow(self):
+        from senza_agent.webserver.app import _acl_allows, _parse_networks
+        import ipaddress
+        peer = ipaddress.ip_address("192.168.1.66")
+        assert not _acl_allows(peer, _parse_networks("192.168.1.0/24"),
+                               _parse_networks("192.168.1.66"))
+
+    def test_whitelist_mode_blocks_unknown(self):
+        from senza_agent.webserver.app import _acl_allows, _parse_networks
+        import ipaddress
+        peer = ipaddress.ip_address("10.9.9.9")
+        assert not _acl_allows(peer, _parse_networks("192.168.1.0/24"), [])
+
+    def test_no_lists_allow_everyone(self):
+        from senza_agent.webserver.app import _acl_allows
+        import ipaddress
+        assert _acl_allows(ipaddress.ip_address("8.8.8.8"), [], [])
+        assert _acl_allows(None, [], [])  # undecidable → fail open
+
+    # middleware over a real socket
+    async def test_middleware_blocks_and_allows(self, aiohttp_client, monkeypatch):
+        from aiohttp import web
+        from senza_agent.webserver.app import WebServer
+
+        async def ok(request):
+            return web.json_response({"ok": True})
+
+        ws = WebServer(port=0)
+        self._setup_env(monkeypatch, allow="192.168.0.0/16", deny="")
+        app = ws.create_app()
+        app.router.add_get("/_acl_probe", ok)
+        client = await aiohttp_client(app)
+        # test client connects over loopback → always allowed
+        resp = await client.get("/_acl_probe")
+        assert resp.status == 200
+
+    async def test_middleware_403_for_non_whitelisted_peer(self, aiohttp_client, monkeypatch):
+        """Simulate a non-loopback peer by monkeypatching the peer-IP reader."""
+        from senza_agent.webserver import app as app_mod
+        import ipaddress
+
+        async def ok(request):
+            return web.json_response({"ok": True})
+
+        ws = app_mod.WebServer(port=0)
+        self._setup_env(monkeypatch, allow="10.0.0.0/8")
+        real_peer = app_mod._peer_ip
+        app_mod._peer_ip = lambda request: ipaddress.ip_address("203.0.113.7")
+        try:
+            client = await aiohttp_client(ws.create_app())
+            resp = await client.get("/api/status")
+            assert resp.status == 403
+            body = await resp.json()
+            assert "forbidden" in body["error"]
+        finally:
+            app_mod._peer_ip = real_peer
+
+    async def test_lists_reread_per_request(self, aiohttp_client, monkeypatch):
+        """Flipping env between requests changes behavior without app rebuild."""
+        from senza_agent.webserver import app as app_mod
+        import ipaddress
+
+        ws = app_mod.WebServer(port=0)
+        real_peer = app_mod._peer_ip
+        app_mod._peer_ip = lambda request: ipaddress.ip_address("203.0.113.7")
+        try:
+            self._setup_env(monkeypatch, allow="")   # no ACL → allowed
+            client = await aiohttp_client(ws.create_app())
+            assert (await client.get("/api/status")).status == 200
+            monkeypatch.setenv("DASHBOARD_DENY", "203.0.113.0/24")  # arm deny
+            assert (await client.get("/api/status")).status == 403
+        finally:
+            app_mod._peer_ip = real_peer

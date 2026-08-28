@@ -45,6 +45,7 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import sys
@@ -66,6 +67,69 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8090
 
+# ── Dashboard access control (DASHBOARD_ALLOW / DASHBOARD_DENY) ────────────
+
+def _peer_ip(request: web.Request):
+    """Best-effort client IP from the socket. None = undecidable."""
+    try:
+        transport = request.transport
+        peer = transport.get_extra_info("peername") if transport else None
+        if peer and isinstance(peer[0], str):
+            return ipaddress.ip_address(peer[0])
+    except (ValueError, OSError, TypeError):
+        pass
+    return None
+
+
+def _parse_networks(raw: str) -> list:
+    """Parse a comma-separated IP/CIDR list into network objects. Invalid entries are skipped."""
+    nets = []
+    for entry in (raw or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
+def _acl_allows(peer, allow_nets: list, deny_nets: list) -> bool:
+    """True if the request should proceed.
+
+    - loopback always allowed (local user can't lock themselves out)
+    - deny wins over allow
+    - allow list empty → allow everyone not denied; non-empty → whitelist mode
+    """
+    if peer is None:
+        return True  # undecidable (e.g. Unix socket) — don't brick the dashboard
+    if peer.is_loopback:
+        return True
+    if any(peer in n for n in deny_nets):
+        return False
+    if allow_nets and not any(peer in n for n in allow_nets):
+        return False
+    return True
+
+
+def _acl_middleware_factory(get_lists):
+    """Build an aiohttp middleware enforcing the dashboard ACL.
+
+    *get_lists* is a zero-arg callable returning (allow_nets, deny_nets) so the
+    lists are re-read per request — env changes via /api/env apply without a restart.
+    """
+    @web.middleware
+    async def acl_middleware(request: web.Request, handler):
+        allow_nets, deny_nets = get_lists()
+        if deny_nets or allow_nets:  # skip socket dance entirely when unset
+            peer = _peer_ip(request)
+            if not _acl_allows(peer, allow_nets, deny_nets):
+                return web.json_response(
+                    {"error": "forbidden by dashboard access control"},
+                    status=403)
+        return await handler(request)
+    return acl_middleware
 
 class WebServer:
     """aiohttp web server for senza-agent interactive UI.
@@ -121,16 +185,21 @@ class WebServer:
             print(f"[senza-agent] harness rebuild failed: {e}", file=sys.stderr)
             return False
 
-    # ── App setup ────────────────────────────────────────────────────────
-
     def create_app(self) -> web.Application:
         """Build the aiohttp Application with all routes."""
-        app = web.Application()
+        app = web.Application(
+            middlewares=[_acl_middleware_factory(self._acl_lists)])
         app.on_startup.append(self._on_startup)
         app.on_cleanup.append(self._on_cleanup)
         self._add_routes(app)
         self._app = app
         return app
+
+    @staticmethod
+    def _acl_lists():
+        """Current ACL networks, read from env on every request."""
+        return (_parse_networks(os.environ.get("DASHBOARD_ALLOW", "")),
+                _parse_networks(os.environ.get("DASHBOARD_DENY", "")))
 
     def _add_routes(self, app: web.Application) -> None:
         # Root: serve dashboard HTML, or upgrade to WebSocket for state stream.

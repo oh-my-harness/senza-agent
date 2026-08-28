@@ -213,3 +213,25 @@ POST /api/env → save_settings（settings.json + config.json 镜像 + os.enviro
   rebuilt:true → GET 回读全部一致；settings.json/config.json 内容正确；
   load_config() 数值类型正确（max_results==8 而非 "8"）。
 - panel.html：node --check 通过；set-body div 配对平衡；新字段 id 唯一。
+
+
+## 2026-08-28 | DASHBOARD_ALLOW/DENY 访问控制真正落地
+
+### 背景
+面板上 IP 白/黑名单此前只存不用（后端无执行代码）——绑定 0.0.0.0 时局域网
+任何人都能打开看板（可读取 API key、启停任务）。本次补上真实执行层。
+
+### 改动
+- `senza_agent/webserver/app.py`：新增 `_peer_ip` / `_parse_networks` /
+  `_acl_allows` / `_acl_middleware_factory`，`create_app` 挂载 ACL 中间件。
+  决策规则：本机回环始终放行；DENY 命中即 403（优先于白名单）；白名单非空
+  = 只放行名单内；对端 IP 取不到时放行（fail-open，避免误锁）。允许/拒绝
+  名单**每请求从 env 重读**——看板保存后立即生效，无需重启。
+- `panel.html`：白/黑名单 hint 注明"改完保存即生效"；保存成功消息追加
+  "访问控制已启用：名单外/黑名单主机访问将返回 403"。
+- `tests/test_webserver.py`：新增 TestDashboardACL 8 个测试（解析、决策
+  矩阵、middleware 经真实 socket 的 200/403、env 热更新无需重建 app）。
+
+### 验证
+- ACL 测试 8 passed；全量 326 passed / 3 skipped（基线 318 + 新增 8）。
+- panel.html node --check 通过。

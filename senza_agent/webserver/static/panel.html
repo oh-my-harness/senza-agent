@@ -2315,12 +2315,12 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
         </div>
 
         <div class="set-fg">
-          <label for="setAllow">IP 白名单 <span class="set-hint-inline">（逗号分隔的 IP 或 CIDR，留空=不启用；只放行名单内主机，本机始终放行）</span></label>
+          <label for="setAllow">IP 白名单 <span class="set-hint-inline">（逗号分隔的 IP 或 CIDR，留空=不启用白名单；启用后只放行名单内主机，本机始终放行。改完保存即生效）</span></label>
           <input type="text" id="setAllow" placeholder="192.168.1.0/24, 10.0.0.5">
         </div>
 
         <div class="set-fg">
-          <label for="setDeny">IP 黑名单 <span class="set-hint-inline">（逗号分隔的 IP 或 CIDR，黑名单优先于白名单）</span></label>
+          <label for="setDeny">IP 黑名单 <span class="set-hint-inline">（逗号分隔的 IP 或 CIDR，命中即拒绝且优先于白名单。改完保存即生效）</span></label>
           <input type="text" id="setDeny" placeholder="192.168.1.66, 192.168.2.0/24">
         </div>
       </div>
@@ -7884,6 +7884,7 @@ fetch('/api/version').then(r => r.json()).then(d => {
       if (r.ok) {
         const lanChanged = (data.DASHBOARD_HOST === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1') !== loadedHost
                         || data.DASHBOARD_PORT !== loadedPort;
+        const aclArmed = !!(data.DASHBOARD_ALLOW.trim() || data.DASHBOARD_DENY.trim());
         let msg;
         if (lanChanged) {
           msg = '已保存。绑定地址/端口需重启看板进程后生效，其余配置已' + (r.rebuilt ? '即时生效' : '将在任务结束后生效') + '。';
@@ -7891,6 +7892,9 @@ fetch('/api/version').then(r => r.json()).then(d => {
           msg = '已保存，配置已即时生效。';
         } else {
           msg = '已保存，配置将在当前任务结束后生效。';
+        }
+        if (aclArmed) {
+          msg += ' 访问控制已启用：名单外/黑名单主机访问将返回 403（本机不受限）。';
         }
         showMsg('success', msg);
         setTimeout(closeSettings, lanChanged ? 2200 : 1000);
