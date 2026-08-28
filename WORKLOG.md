@@ -534,3 +534,8 @@ release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts �
 ### 使用方法
 
 升级到 v0.1.2 后：设置 → 运行参数 → 工作目录 → 「浏览…」可视化选择；新版本发布后桌面版自动在右下角提示，点「立即安装」即重启进入安装向导。
+
+## 2026-08-28 | v0.1.2 发布完成
+
+CI run 33159967448 success（~1 分钟）；draft 378384199（exe + latest.yml）通过 API PATCH draft:false 公开发布，孤儿 draft 378384198（仅 blockmap）已删除（204）。公开发布时间 2026-08-28T09:37:22Z，latest.yml 已报 0.1.2（sha512 + blockmap 具备差量更新条件）。URL: https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.2
+遗留项：目录选择对话框与更新横幅的 UI 级验证需 Windows 实机（本机无 X server，无法驱动 Electron 渲染进程）；卸载不清理 ~/.senza-agent（含 API key、会话数据），维持现状。
