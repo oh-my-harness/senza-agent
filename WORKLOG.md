@@ -345,3 +345,57 @@ NSIS 编译器源码逐条核实）
   属 electron-builder 模板限制，非本文件缺陷。
 - 本机为 Linux，无法运行 makensis 实际打包；下次在 Windows 构建机
   build:win 时请留意 makensis 输出是否有意外告警（-WX 模式下会报错）。
+
+## 2026-08-28 | NSIS 脚本 makensis -WX 真机编译验证（Linux 交叉验证）
+
+### 做了什么
+兑现上一条日志的遗留项：在 Linux 上对 electron-builder 26.15.3 真实拼装的
+NSIS 安装器脚本做 makensis 编译验证（而非仅静态分析），验证
+desktop/installer.nsh（commit c413135）在 -WX 模式下 0 告警 0 错误。
+
+### 方法
+- 无 wine、系统 glibc 2.28。electron-builder 默认 nsis@1.2.1 bundle 的
+  linux/x64/makensis（NSIS 3.12）按 GLIBC 2.33/2.34 编译，本机无法直接运行
+  （GLIBCXX/GLIBC 版本不足；conda 的 libstdc++ 只解决一半，libc 无法补）。
+  Docker/podman 在该 NFS 老内核环境不可用（vfs 层目录 0555 + pivot_root
+  必然 EACCES）。
+- 改用 toolsets.nsis = "0.0.0" 的 legacy 工具集：nsis-3.0.4.1 +
+  nsis-resources-3.4.1（npmmirror 下载，sha256 与 windows.js 内置校验和
+  完全一致），其 linux/makensis 按 glibc 2.6.32 构建，本机直接可跑。
+- 通过环境变量把工具集指到本地：ELECTRON_BUILDER_NSIS_DIR（含
+  linux/makensis + elevate.exe + plugins/）、ELECTRON_BUILDER_7ZIP_PATH、
+  electron zip 预热 @electron/get 缓存（npmmirror，sha256 校验通过）。
+- 在 NODE preload 里打两个运行时补丁后跑真实 build()（win: nsis, x64,
+  signAndEditExecutable:false, electronDist 指向本地 zip）：
+  1) WineVmManager.exec → 不跑 wine，直接在 Z: 换算路径写一个 514 字节
+     的占位卸载器（pass2 只做 File 内嵌，编译期不解析 PE）；
+  2) NsisTarget.executeMakensis → 落盘两遍完整脚本与 makensis 命令行。
+  其余流程（配置校验、asar、资源拷贝、7z 打包、压缩、installApplicationFiles
+  内嵌）全部为 electron-builder 原生代码。
+
+### 验证结果
+- 真实 build 全程退出码 0：makensis pass1（BUILD_UNINSTALLER）与 pass2
+  （最终安装器，内嵌 288.7MB 7z 与卸载器）均带 -WX，0 错误 0 告警，
+  产出 289,840,786 字节的 SenzaAgent Setup 0.1.0.exe。
+- 拼装脚本确认：用户 include 以绝对路径展开
+  （!include ".../desktop/installer.nsh"），位于 addplugindir 之后、
+  common.nsh/MUI2 之前；customHeader/customInstall/customUnInstall 三个
+  hook 经 !ifmacrodef 守卫插入。
+- 对照实验（同一脚本重放）：
+  1) 原样重放 pass1/pass2 → 均 exit 0；
+  2) 把 customInstall 体内 DetailPrint 换成未定义变量 ${...} → 编译失败于
+     installApplicationFiles 展开内，证明 customInstall 确实被编入 section
+     末尾（即 c413135 修复的生效路径）；
+  3) 把 customInstall 改名 → 仍编译通过，证明 !ifmacrodef 守卫行为正确。
+  即：上一轮静态分析的结论（hook 位置、ShowInstDetails show 覆盖
+  nevershow 在 -WX 下安全）全部得到编译器实证。
+
+### 结论与遗留
+- 上一条日志的担心可以放下：installer.nsh 在 -WX 下编译干净，Windows
+  构建机 build:win 不应出现本文件引发的告警。
+- 本验证中 wine 被替换为占位卸载器，故产物仅证明"脚本可编译"，
+  不能运行；真实发布仍以 Windows 构建机为准。
+- Windows 构建机上若也遇到 glibc 类问题不存在（win32 用 makensis.exe）；
+  但注意 package.json 声明 electron-builder ^25.0.0 而本机实装 26.15.3，
+  Windows 端装到哪个版本以实际 npm ci 结果为准（hook 机制两版本一致）。
+
