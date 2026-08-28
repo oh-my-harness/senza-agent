@@ -399,3 +399,45 @@ desktop/installer.nsh（commit c413135）在 -WX 模式下 0 告警 0 错误。
   但注意 package.json 声明 electron-builder ^25.0.0 而本机实装 26.15.3，
   Windows 端装到哪个版本以实际 npm ci 结果为准（hook 机制两版本一致）。
 
+
+## 2026-08-28 | 参照 Folumi 打通 GitHub Actions 自动发布 exe 安装包
+
+### 做了什么
+参考 oh-my-harness/Folumi 的 release-desktop.yml（tag 触发 →
+windows-latest 构建 → softprops/action-gh-release 上传 Releases），
+改造本仓库 .github/workflows/build-windows.yml。
+
+### 关键发现与修复
+- 旧 workflow 的产物路径 `desktop/dist/SenzaAgent-Setup-*.exe` 与
+  electron-builder 默认输出名 `SenzaAgent Setup 0.1.0.exe`（含空格）
+  不匹配——artifact 上传和 Release 发布都会失败。这是"从未真正发过包"
+  的根因。
+- package.json 的 build.nsis 增加
+  `"artifactName": "${productName}-Setup-${version}.${ext}"`，
+  产出确定为 `SenzaAgent-Setup-0.1.0.exe`（无空格，CI glob 可靠命中）。
+- package.json 把 electron-builder 从 `^25.0.0` 钉到 `26.15.3` 并重新生成
+  package-lock.json：本地 node_modules 实装、且经过 -WX 编译验证的就是
+  26.15.3；旧 lockfile 钉在 25.1.8，CI 上 npm ci 会装到未经验证的模板版本。
+  CI 与已验证环境从此一致。
+- workflow 对齐 Folumi 的做法：node 22 + npm ci 缓存、tag 与 package.json
+  版本一致性校验（版本不匹配直接报错退出）、`--publish never` 禁用
+  electron-builder 自带的 GitHub 发布（避免与 softprops 重复发布冲突）、
+  release 资产命名 `SenzaAgent-v<ver>-windows-x64-setup.exe`、
+  fail_on_unmatched_files + generate_release_notes。
+- 触发方式与 Folumi 一致：push `v*` tag 自动构建并发布 Release；
+  workflow_dispatch 手动触发只出 artifact 不发布。
+
+### 验证
+- 本机用真实 electron-builder 26.15.3 跑了完整 NSIS 管线（wine 桩）：
+  -WX 两遍编译 0 警告，产出 289,840,786 字节的
+  `SenzaAgent-Setup-0.1.0.exe`，确认 artifactName 生效。
+- 直接 CLI 方式（无 wine 桩）如预期失败于卸载器 wine 步骤，属本机环境
+  限制；GitHub windows-latest runner 自带 wine，不受影响。
+- workflow YAML 解析通过；desktop/dist 产物确认被 .gitignore 覆盖。
+
+### 使用方法
+```
+git tag v0.1.0 && git push origin v0.1.0
+```
+Actions 自动构建约 5-10 分钟，产物出现在 GitHub Releases（含自动
+release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts 下载。

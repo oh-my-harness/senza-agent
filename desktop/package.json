@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "electron": "^34.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "com.senzaagent.desktop",
@@ -29,7 +29,11 @@
       {
         "from": "../senza_agent",
         "to": "senza_agent",
-        "filter": ["**/*", "!__pycache__/**", "!**/*.pyc"]
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!**/*.pyc"
+        ]
       },
       {
         "from": "../pyproject.toml",
@@ -74,6 +78,7 @@
       "deleteAppDataOnUninstall": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "include": "installer.nsh"
     },
     "linux": {
