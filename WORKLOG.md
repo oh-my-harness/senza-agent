@@ -493,3 +493,18 @@ release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts �
 ### 使用方法
 
 桌面版/看板：设置 → 运行参数 → 工作目录，填绝对路径（支持 `~`），保存即时生效（任务运行中则任务结束后生效）。留空 = 回落到后端启动目录。
+
+## 2026-08-28 | v0.1.1 发布（含面板"工作目录"设置项）
+
+### 本次做了什么
+
+版本号 0.1.0 → 0.1.1（`desktop/package.json`），打 tag `v0.1.1` 触发 CI（run 33158131224，成功，约 2 分钟）。electron-builder 自动创建 draft Release，手动 publish（id 378370587）并补了 release notes；顺手删掉了仅含 .blockmap 的孤儿 draft（378370588）。
+
+### 验证结果
+
+- Release 页公开可见：`SenzaAgent-Setup-0.1.1.exe`（81,832,495 B）+ `latest.yml`（348 B）。
+- 发布流程与 v0.1.0 完全一致，无新坑。
+
+### 使用方法
+
+下载 https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.1 覆盖安装即可；设置 → 运行参数 → 工作目录 可直接切换 Agent 工作根目录。
