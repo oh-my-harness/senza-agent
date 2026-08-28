@@ -263,3 +263,23 @@ POST /api/env → save_settings（settings.json + config.json 镜像 + os.enviro
   显示旧图属缓存，Ctrl+F5 即可。
 - 用户侧要生效需在 Windows 构建机 git pull 后重新打包安装；旧任务栏图标还需
   清 Windows 图标缓存（ie4uinit -show 或删 IconCache.db 重启 explorer）。
+
+## 2026-08-28 | 品牌图统一换源为 OIP(1).jpg（纯图形版）+ 面板 logo 缓存穿透
+
+### 背景
+用户指认统一源图应为 /data/xuhongming/OIP(1).jpg（125x131 JPEG，仅蓝色图形标，
+无文字），而非此前用的 OIP.webp（图形+SENZA AGENT 文字）。另反馈桌面版菜单栏
+下方左侧仍有未替换图标——即页面顶栏 .logo-icon（LOGO_256.png），桌面端 Electron
+HTTP 缓存导致看到旧图。
+
+### 改动
+- desktop/icon.png、senza_agent/webserver/static/LOGO_256.png：由 OIP(1).jpg
+  重做——白底 256x256，图形标等比缩放至 198x208 居中（LANCZOS）。
+- desktop/build/icon.ico：由新 icon.png 重建 16~256 七档（256 档与 icon.png
+  逐像素 0.0 差）。
+- panel.html：favicon 与顶栏 logo URL 加 ?v=oip1 缓存穿透参数，装新版立即生效。
+
+### 验证
+- PNG 头/尺寸校验通过；ico 结构 7 条目、最大帧 256≥256。
+- 新图与旧 OIP.webp 版逐像素平均差 34.0/255——确为不同构图（无文字版）。
+- panel.html 中仅有的两处 LOGO_256 引用均已带 ?v=oip1。
