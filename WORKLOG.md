@@ -472,3 +472,24 @@ release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts �
 - 以后发版流程：改 desktop/package.json version → commit →
   git tag vX.Y.Z && git push origin vX.Y.Z → CI 构建草稿 Release →
   Releases 页点 publish。
+
+## 2026-08-28 | 面板新增"工作目录"设置项（运行参数页，热生效）
+
+### 本次做了什么
+
+用户问"桌面版怎么切换工作目录"，调查结论：working_dir 此前只能手改 `~/.senza-agent/config.json` 的 `working_dir` 字段或环境变量 `SENZA_AGENT_WORKING_DIR`，面板无入口。本次把它接入设置面板：
+
+- **后端** `senza_agent/webserver/qevos_bridge.py`：
+  - `_api_env_get` 增加 `SENZA_AGENT_WORKING_DIR` 字段，报告实际生效值（config/env 叠加后，未设置回落 `os.getcwd()`）。
+  - `_api_env_post` 保存前校验：`os.path.expanduser` 后必须 `os.path.isdir`，否则 400 拒绝（防止保存后 agent 每次工具调用报错）；传空=清除，回落启动目录。
+- **前端** `panel.html`：设置 → 运行参数页新增"工作目录"文本框（label 带 hint：SENZA_AGENT_WORKING_DIR、留空=启动目录、不存在会被拒绝）；打开设置时从 `/api/env` 回填；保存时随 payload 提交。
+- **生效机制（零后端状态新增）**：复用现有 settings.json 键值机制——保存 → `save_settings()`（写 settings.json + `os.environ`）→ 空闲时 `rebuild_harness()` → `load_config()` 的 `_apply_env` 读到该变量 → `create_agent` 用新 working_dir 重建。任务运行中保存则推迟到任务结束（`pending_rebuild`）。优先级不变：环境变量 > config.json > cwd。
+
+### 验证结果
+
+- 起真实 dashboard（隔离 HOME，端口 8791）跑通全链路：GET 回填 ✓；POST 不存在目录 → 400 `工作目录不存在或不是目录` ✓；POST 合法目录 → `{"ok":true,"rebuilt":true}` ✓；再 GET 返回新值 ✓；settings.json 持久化 ✓；POST 空串 → 键删除、回落 cwd ✓。
+- 单独验证启动链 `load_settings_into_env() → load_config()`：重启后 working_dir 仍是保存值 ✓。
+
+### 使用方法
+
+桌面版/看板：设置 → 运行参数 → 工作目录，填绝对路径（支持 `~`），保存即时生效（任务运行中则任务结束后生效）。留空 = 回落到后端启动目录。

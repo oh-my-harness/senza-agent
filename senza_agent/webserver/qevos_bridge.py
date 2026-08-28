@@ -1110,12 +1110,15 @@ class QevosAPI:
         # Structured settings (behavior / web / compaction) — read from the
         # merged config so settings.json-driven values show up here.
         result["THINKING_LEVEL"] = ""
+        result["SENZA_AGENT_WORKING_DIR"] = ""
         result["web"] = {}
         result["compaction"] = {}
         try:
             from senza_agent.config import load_config
             cfg = load_config()
             result["THINKING_LEVEL"] = cfg.behavior.thinking_level or ""
+            # 工作目录：报告实际生效值（config/env 叠加后），未设置时回落到进程 cwd
+            result["SENZA_AGENT_WORKING_DIR"] = cfg.working_dir or os.getcwd()
             result["web"] = {
                 "provider": cfg.web.provider or "",
                 "base_url": cfg.web.base_url or "",
@@ -1152,6 +1155,15 @@ class QevosAPI:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "invalid JSON"}, status=400)
+        # 工作目录合法性校验：不存在或不是目录 → 拒绝保存（否则 agent 每次工具调用都会报错）。
+        # 传空值表示清除设置（回落到启动目录），无需校验。
+        wd = str(body.get("SENZA_AGENT_WORKING_DIR", "") or "").strip()
+        if wd:
+            expanded = os.path.expanduser(wd)
+            if not os.path.isdir(expanded):
+                return web.json_response(
+                    {"error": f"工作目录不存在或不是目录: {wd}"}, status=400)
+            body["SENZA_AGENT_WORKING_DIR"] = expanded
 
         from senza_agent.config import save_settings, load_settings_into_env
         save_settings(body)

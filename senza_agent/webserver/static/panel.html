@@ -2343,6 +2343,11 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
         </div>
 
         <div class="set-fg">
+          <label for="setWorkingDir">工作目录 <span class="set-hint-inline">（SENZA_AGENT_WORKING_DIR，Agent 工具执行文件读写/命令的根目录，留空=使用启动目录；目录不存在时保存会被拒绝）</span></label>
+          <input type="text" id="setWorkingDir" placeholder="（留空=默认启动目录）" spellcheck="false" autocomplete="off">
+        </div>
+
+        <div class="set-fg">
           <label for="setThinkingLevel">思考强度 <span class="set-hint-inline">（thinking_level，控制模型推理深度。off=关闭思考，minimal/low=轻量，medium=中等，high=深度。留空=模型默认）</span></label>
           <select id="setThinkingLevel">
             <option value="">（留空=模型默认）</option>
@@ -7686,8 +7691,8 @@ fetch('/api/version').then(r => r.json()).then(d => {
       document.getElementById('setToolFeedback').value = env.MAX_TOOL_FEEDBACK_CHARS || '';
       document.getElementById('setMaxTokens').value    = env.LLM_MAX_TOKENS || '';
       document.getElementById('setCtxWindow').value    = env.LLM_CONTEXT_WINDOW || '';
+      document.getElementById('setWorkingDir').value   = env.SENZA_AGENT_WORKING_DIR || '';  // 工作目录（运行参数）
       // 联网搜索（web 配置，来自 config.json / settings.json 镜像）
-      const web = env.web || {};
       document.getElementById('setWebProvider').value    = web.provider || 'bing';
       document.getElementById('setWebBaseUrl').value     = web.base_url || '';
       document.getElementById('setWebKey').value         = web.api_key || '';
@@ -7860,6 +7865,8 @@ fetch('/api/version').then(r => r.json()).then(d => {
       // 温度已按模型拆到各槽位；空值 = 从 .env 删键，顺手清掉旧的全局 LLM_TEMPERATURE，
       // 否则它会继续压过新的默认值 0.8。
       LLM_CONTEXT_WINDOW: document.getElementById('setCtxWindow').value.trim(),
+      // 工作目录 — 空值=删键，回落到启动目录（服务端 rebuild 后 os.getcwd() 生效）
+      SENZA_AGENT_WORKING_DIR: document.getElementById('setWorkingDir').value.trim(),
       // 联网搜索配置 — 嵌套在 web 对象中（镜像写入 config.json）
       web: {
         provider:      document.getElementById('setWebProvider').value,
