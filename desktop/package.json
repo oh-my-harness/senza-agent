@@ -88,5 +88,9 @@
     "directories": {
       "output": "dist"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oh-my-harness/senza-agent.git"
   }
 }
