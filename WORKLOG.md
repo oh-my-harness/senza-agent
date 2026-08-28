@@ -283,3 +283,65 @@ HTTP 缓存导致看到旧图。
 - PNG 头/尺寸校验通过；ico 结构 7 条目、最大帧 256≥256。
 - 新图与旧 OIP.webp 版逐像素平均差 34.0/255——确为不同构图（无文字版）。
 - panel.html 中仅有的两处 LOGO_256 引用均已带 ?v=oip1。
+
+## 2026-08-28 | NSIS 安装器进度/详情功能修正（installer.nsh）
+
+### 背景
+desktop/installer.nsh 有一份未提交改动，意图是让 NSIS 安装向导显示安装
+进度与详情文本（详情列表框 + 状态栏叙述行）。静态审查发现其中三个 hook
+有一个真 bug、两个无效代码，若直接提交会得到"详情框开着但永远没有输出"
+的效果，甚至编译报错。
+
+### 问题分析（对照 node_modules 内 electron-builder 26.15.3 模板与
+NSIS 编译器源码逐条核实）
+
+- 真 bug：模板 installSection.nsh 第 5-7 行在非静默模式下执行
+  `SetDetailsPrint none`。NSIS 源码（script.cpp 的 TOK_SETDETAILSPRINT /
+  Ui.c 的 update_status_text）确认 none=6 会同时关闭状态栏与详情列表框
+  两条输出通路，DetailPrint 也走同一闸门——因此原 customInstall 里的
+  DetailPrint 被完全吞掉。customInit 里的 `SetDetailsPrint both` 在
+  .onInit 阶段执行，早于该行，且 both 本就是默认值，等于无效代码。
+- 编译错误风险：customPageAfterChangeDir 被 assistedInstaller.nsh 在
+  "目录页之后、InstFiles 页之前"的顶层位置 !insertmacro 展开，裸
+  DetailPrint 属于运行时指令，出现在任何函数/区段之外无法编译；该 hook
+  本意是插入自定义页面。即使包进函数，执行时 InstFiles 页尚未创建，
+  update_status_text 因窗口句柄为空直接返回，消息照样丢失。
+- 删除安全性：所有 hook 展开点均带 !ifmacrodef 守卫
+  （installer.nsi:45-47/79-81、installSection.nsh:81-83、
+  assistedInstaller.nsh:42-44），删掉宏定义不会导致编译失败。
+- `ShowInstDetails show` 覆盖 common.nsh 的 nevershow：核实 NSIS 源码，
+  ShowInstDetails 只是清位再置位，重复指定不产生任何警告，而
+  electron-builder 以 -WX（警告即错误）调 makensis——确认无风险。
+  用户 include 由绝对路径引入，仅展开一次；installSection.nsh 第 1 行
+  的同名 !include 按 !addincludedir 顺序解析到模板自带的
+  include/installer.nsh，与用户文件同名但不同物，无重复定义。
+
+### 改动
+- 删除 customInit（无效代码）与 customPageAfterChangeDir（裸运行时指令
+  无法通过编译）。
+- customInstall 开头加 `SetDetailsPrint both`：该 hook 是主安装区段最后
+  一条语句，之后无其他输出需要压制，恢复默认输出模式后 DetailPrint
+  能同时写入状态栏与详情列表框；静默安装时模板的 none 不执行，此行
+  重申默认值，无副作用。
+- customHeader（ShowInstDetails show / ShowUnInstDetails show）与
+  customUnInstall（卸载时先输出提示再删 python_venv）核实无误，保留。
+- 修正头部设计注释：逐文件提取行仍被模板的 SetDetailsPrint none 隐藏，
+  详情框实际显示的是 customInstall 的收尾叙述行。
+
+### 验证
+- 无 Windows/makensis 环境，走静态验证：逐行核对最终脚本拼装顺序
+  （NsisTarget.computeCommonInstallerScriptHeader + computeFinalScript）、
+  各 hook 展开点与守卫、SetDetailsPrint/DetailPrint 的运行时语义
+  （NSIS script.cpp/Ui.c 源码级确认）。
+- 汇总运行时序：GUI 安装 = 详情框可见、File /r 期间进度条正常推进
+  （逐文件行被隐藏）、末尾显示收尾叙述；静默安装无输出（符合预期）；
+  卸载 = 显示"Removing Python virtual environment..."后删 venv。
+- 仓库仅 desktop/installer.nsh 与 WORKLOG.md 变更；desktop/build/icon.ico
+  等此前成果未受影响。
+
+### 说明
+- 已知取舍：安装过程详情框只有一行收尾叙述，看不到逐文件提取行——
+  模板在 installApplicationFiles 之前没有提供可恢复输出的 hook，
+  属 electron-builder 模板限制，非本文件缺陷。
+- 本机为 Linux，无法运行 makensis 实际打包；下次在 Windows 构建机
+  build:win 时请留意 makensis 输出是否有意外告警（-WX 模式下会报错）。
