@@ -92,5 +92,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oh-my-harness/senza-agent.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

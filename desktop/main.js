@@ -22,7 +22,8 @@
  * Electron is just a thin shell: window + lifecycle.
  */
 
-const { app, BrowserWindow, shell, nativeImage, Menu } = require('electron');
+const { app, BrowserWindow, shell, nativeImage, Menu, dialog, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const http = require('http');
 const net  = require('net');
@@ -363,6 +364,66 @@ function showLoadingWindow(message) {
   return win;
 }
 
+// ── Native folder picker (settings → 工作目录) ──────────────────────────────
+
+ipcMain.handle('desktop:pick-folder', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    title: '选择工作目录',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+});
+
+// ── Auto-update (electron-updater) ─────────────────────────────────────────
+//
+// Update source: GitHub Releases of this repository (electron-builder
+// publishes exe + latest.yml on every v* tag). electron-updater reads the
+// repository URL from the app's package.json "repository" field at build
+// time and anonymously fetches latest.yml — no token needed for a public
+// repo. Updates are checked on startup and every 6 hours; download happens
+// in the background, install on explicit user confirmation (quitAndInstall).
+// Dev mode and non-packaged runs are skipped entirely.
+
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;   // safety net: install even if user dismisses the prompt
+  autoUpdater.logger = console;
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const v = info && info.version ? info.version : '';
+    console.log(`[desktop] update downloaded: v${v}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:update-downloaded', { version: v });
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    // Offline, GitHub unreachable, etc. — non-fatal, never block the app.
+    console.error('[desktop] auto-update error:', err && err.message);
+  });
+
+  const check = () => {
+    autoUpdater.checkForUpdates().catch((err) =>
+      console.error('[desktop] update check failed:', err && err.message));
+  };
+  check();
+  setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+}
+
+// Renderer → confirm installing the downloaded update now (quits the app,
+// which also SIGTERMs the Python backend, then runs the NSIS installer).
+ipcMain.handle('desktop:install-update', async () => {
+  // Give the ack a moment to flush, then hand over to the installer.
+  setTimeout(() => {
+    autoUpdater.quitAndInstall(false, true);  // isSilent=false → wizard; isForceRunAfter=true
+  }, 150);
+  return true;
+});
+
 app.whenReady().then(async () => {
   setupMenu();
 
@@ -389,6 +450,7 @@ app.whenReady().then(async () => {
 
   if (_loadingWin) _loadingWin.close();
   createWindow();
+  setupAutoUpdate();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

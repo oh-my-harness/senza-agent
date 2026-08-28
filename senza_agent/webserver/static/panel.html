@@ -2344,7 +2344,10 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
 
         <div class="set-fg">
           <label for="setWorkingDir">工作目录 <span class="set-hint-inline">（SENZA_AGENT_WORKING_DIR，Agent 工具执行文件读写/命令的根目录，留空=使用启动目录；目录不存在时保存会被拒绝）</span></label>
-          <input type="text" id="setWorkingDir" placeholder="（留空=默认启动目录）" spellcheck="false" autocomplete="off">
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="setWorkingDir" placeholder="（留空=默认启动目录）" spellcheck="false" autocomplete="off" style="flex:1;">
+            <button type="button" class="set-btn" id="setWorkingDirBrowse" style="display:none; padding:8px 12px; white-space:nowrap;" title="打开系统目录选择器">浏览…</button>
+          </div>
         </div>
 
         <div class="set-fg">
@@ -7693,6 +7696,7 @@ fetch('/api/version').then(r => r.json()).then(d => {
       document.getElementById('setCtxWindow').value    = env.LLM_CONTEXT_WINDOW || '';
       document.getElementById('setWorkingDir').value   = env.SENZA_AGENT_WORKING_DIR || '';  // 工作目录（运行参数）
       // 联网搜索（web 配置，来自 config.json / settings.json 镜像）
+      const web = env.web || {};
       document.getElementById('setWebProvider').value    = web.provider || 'bing';
       document.getElementById('setWebBaseUrl').value     = web.base_url || '';
       document.getElementById('setWebKey').value         = web.api_key || '';
@@ -7713,6 +7717,25 @@ fetch('/api/version').then(r => r.json()).then(d => {
   window.openSettings = openSettings;
 
   document.getElementById('setClose').addEventListener('click', closeSettings);
+
+  // ── 工作目录：桌面版提供原生目录选择器 ──────────────────────────
+  // 仅在 Electron 桌面版（preload 注入了 senzaDesktop.pickFolder）显示「浏览…」。
+  // 纯浏览器里没有该 API，按钮保持隐藏，手输路径仍然可用。
+  if (window.senzaDesktop && typeof window.senzaDesktop.pickFolder === 'function') {
+    const browseBtn = document.getElementById('setWorkingDirBrowse');
+    browseBtn.style.display = '';
+    browseBtn.addEventListener('click', async () => {
+      browseBtn.disabled = true;
+      try {
+        const picked = await window.senzaDesktop.pickFolder();
+        if (picked) document.getElementById('setWorkingDir').value = picked;
+      } catch (e) {
+        console.error('[settings] pickFolder failed:', e);
+      } finally {
+        browseBtn.disabled = false;
+      }
+    });
+  }
   document.getElementById('setCancel').addEventListener('click', closeSettings);
   // 只在「按下」也落在遮罩上时才算点背景关闭。否则从输入框里拖选文字、
   // 松手时落到遮罩上会被合成为一次 target=modal 的 click，导致面板误关闭。
@@ -7951,6 +7974,31 @@ fetch('/api/version').then(r => r.json()).then(d => {
         delete _savedJobTimers[jid];
       }
     }
+  });
+})();
+// ── 桌面版：自动更新提示 ──────────────────────────────────────────────────
+// 仅 Electron 桌面版生效（preload 注入了 senzaDesktop）。后台下载完成后
+// 弹出持久提示条，用户点「立即重启并安装」→ IPC → quitAndInstall。
+(function setupDesktopUpdateBanner() {
+  if (!window.senzaDesktop || typeof window.senzaDesktop.onUpdateDownloaded !== 'function') return;
+  window.senzaDesktop.onUpdateDownloaded((info) => {
+    const v = (info && info.version) || '';
+    const wrap = document.createElement('div');
+    wrap.id = 'updateBanner';
+    wrap.style.cssText = 'position:fixed; right:16px; bottom:16px; z-index:10000; background:var(--bg3,#161b22); border:1px solid var(--blue,#58a6ff); border-radius:8px; padding:12px 14px; color:var(--text,#e6edf3); font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.4); max-width:340px;';
+    wrap.innerHTML =
+      '<div style="margin-bottom:8px;">新版本 v' + v + ' 已就绪，重启后自动安装。</div>' +
+      '<div style="display:flex; gap:8px; justify-content:flex-end;">' +
+      '<button id="updLater" style="background:none; border:1px solid var(--border,#30363d); color:inherit; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12px;">下次启动时</button>' +
+      '<button id="updNow" style="background:linear-gradient(135deg,#1f6feb,#3b82f6); border:none; color:#fff; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12px;">立即安装</button>' +
+      '</div>';
+    document.body.appendChild(wrap);
+    wrap.querySelector('#updLater').addEventListener('click', () => wrap.remove());
+    wrap.querySelector('#updNow').addEventListener('click', async () => {
+      wrap.querySelector('#updNow').disabled = true;
+      toast('正在退出并安装更新…');
+      try { await window.senzaDesktop.installUpdate(); } catch (e) { console.error(e); }
+    });
   });
 })();
 </script>

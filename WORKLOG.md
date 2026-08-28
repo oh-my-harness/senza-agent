@@ -508,3 +508,29 @@ release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts �
 ### 使用方法
 
 下载 https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.1 覆盖安装即可；设置 → 运行参数 → 工作目录 可直接切换 Agent 工作根目录。
+
+## 2026-08-28 | v0.1.2：修设置面板 "web is not defined" + 工作目录可视化选择 + 桌面自动更新
+
+### 本次做了什么
+
+1. **修复 v0.1.1 设置面板报错**「无法读取当前配置（web is not defined）」：前次插入 setWorkingDir 回填行时误删了 `const web = env.web || {}` 声明行，openSettings 抛 ReferenceError 落入 catch，被误报成"服务端旧版本"。已恢复声明行，且此错误信息现在只在真正 404/断连时出现。
+2. **工作目录可视化选择**：desktop/preload.js 暴露 `senzaDesktop.pickFolder()`（IPC `desktop:pick-folder` → 主进程 `dialog.showOpenDialog({openDirectory, createDirectory})`）；panel.html 在工作目录输入框旁加「浏览…」按钮，仅在桌面版（检测 `window.senzaDesktop`）显示，纯浏览器隐藏。
+3. **桌面版自动更新**（electron-updater 6.8.9）：
+   - main.js `setupAutoUpdate()`：打包后启动时 + 每 6h `checkForUpdates()`，GitHub Releases 匿名拉 latest.yml（公开仓库免 token），`autoDownload` 后台下载，`autoInstallOnAppQuit` 兜底。
+   - 下载完成 → preload `onUpdateDownloaded` → panel 右下角弹持久提示条（新版本 v + 「下次启动时」/「立即安装」），「立即安装」走 `desktop:install-update` IPC → `quitAndInstall(false, true)`（向导式 + 装完自启）。
+   - npm install 首次超时（300s），重跑 `--prefer-offline` 2s 完成；electron-updater ^6.8.9 已入 package.json + lockfile。
+
+### 验证结果
+
+- main.js/preload.js `node -c` 通过；panel.html 内联 JS `new Function()` 解析通过（源文件 + 实际伺服内容均验证）。
+- 起 dashboard 实测：served panel 含 `const web`/浏览按钮/更新横幅三处；/api/env 全链路（回填/保存合法目录/400 拒绝不存在目录/清空回落）照旧 ✓。
+- 无显示器环境无法点原生目录对话框与更新流程 UI；这两条依赖 Windows 实机/GH runner 验证。
+
+### 踩坑与结论
+
+- edit 工具 SWAP 跨行时把 `const web` 声明当上下文吞掉 → v0.1.1 带病发布。教训：改 settings 回填块时，声明行与赋值行是独立行，SWAP 范围必须逐一核对。
+- electron-updater 对 GitHub Releases 的 latest.yml 结构有要求（version/files/sha512），electron-builder 26.15.3 默认产物即兼容，无需额外配置。
+
+### 使用方法
+
+升级到 v0.1.2 后：设置 → 运行参数 → 工作目录 → 「浏览…」可视化选择；新版本发布后桌面版自动在右下角提示，点「立即安装」即重启进入安装向导。
