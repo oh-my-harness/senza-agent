@@ -23,7 +23,6 @@ import os
 import sys
 from pathlib import Path
 
-DEFAULT_RUNS_DIR = "./runs"
 
 # ── ANSI colors (best-effort; fine if terminal strips them) ──────────────────
 GREEN = "\033[92m"
@@ -190,8 +189,10 @@ def ensure_env_defaults():
     """Load ``.env`` and set default env vars for the run."""
     load_dotenv_if_present()
 
-    # Persist useful experience by default unless explicitly disabled.
-    os.environ.setdefault("SENZA_AGENT_RUNS_DIR", DEFAULT_RUNS_DIR)
+    # NOTE: SENZA_AGENT_RUNS_DIR is intentionally NOT defaulted here.
+    # The webserver's _resolve_runs_dir() owns resolution:
+    # explicit env > ~/.senza-agent/runs under a packaged app > <agent dir>/runs.
+    # Defaulting "./runs" here would shadow the packaged-app case.
     os.environ.setdefault("AUTO_SAVE_SNAPSHOT_ON_EXIT", "1")
     os.environ.setdefault("AUTO_REMEMBER_ON_DONE", "1")
 

@@ -30,7 +30,34 @@ _MODIFIED = object()
 # ── Paths ──────────────────────────────────────────────────────────────────
 
 _AGENT_DIR = Path(os.environ.get("SENZA_AGENT_DIR", Path.cwd()))
-_RUNS_DIR = _AGENT_DIR / "runs"
+
+
+def _resolve_runs_dir() -> Path:
+    """Dashboard run-archive directory.
+
+    Priority:
+      1. $SENZA_AGENT_RUNS_DIR (absolute) — explicit override (users/CLI can
+         export it to relocate run archives; the desktop app may pin it).
+      2. ~/.senza-agent/runs — user data dir; the default under the packaged
+         desktop app so we never write into the (possibly read-only)
+         installation directory.
+      3. <SENZA_AGENT_DIR>/runs — legacy/dev layout (repo checkout).
+
+    SENZA_AGENT_DIR alone is NOT used when it points inside the packaged app
+    (detected via the electron 'resources' path component) — that directory
+    belongs to the installer, not to user data.
+    """
+    env_rd = os.environ.get("SENZA_AGENT_RUNS_DIR", "").strip()
+    if env_rd:
+        return Path(env_rd)
+    agent_dir = _AGENT_DIR
+    # Case-insensitive match so Windows "Resources" also routes to user data.
+    if not any(p.lower() == "resources" for p in agent_dir.parts):
+        return agent_dir / "runs"
+    return Path.home() / ".senza-agent" / "runs"
+
+
+_RUNS_DIR = _resolve_runs_dir()
 _SKILLS_DIR = _AGENT_DIR / "SKILLS"  # SDK layout: <name>/SKILL.md (same dir the harness loads)
 _CRONS_DIR = _AGENT_DIR / "crons"
 _APPS_DIR = _AGENT_DIR / "apps"

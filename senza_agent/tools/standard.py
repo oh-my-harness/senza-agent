@@ -1048,14 +1048,27 @@ def tool_watch_list() -> dict:
 # ── Environment info ────────────────────────────────────────────────────────
 
 
+def _effective_working_dir() -> str:
+    """The working directory tools actually execute in.
+
+    Mirrors agent.py: create_os_env(config.working_dir or os.getcwd()).
+    Reading the merged config (config.json + SENZA_AGENT_WORKING_DIR env)
+    keeps this in sync with what the harness resolved at build time.
+    """
+    try:
+        from senza_agent.config import load_config
+        return load_config().working_dir or os.getcwd()
+    except Exception:
+        return os.getcwd()
+
+
 def tool_get_env_info() -> dict:
     """Return basic environment info: current datetime and working directory."""
     now = datetime.now()
-    cwd = os.getcwd()
     return _ok({
         "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
         "weekday": now.strftime("%A"),
-        "cwd": cwd,
+        "cwd": _effective_working_dir(),
     })
 
 

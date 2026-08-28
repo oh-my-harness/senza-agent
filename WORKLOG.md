@@ -554,3 +554,29 @@ CI run 33159967448 success（~1 分钟）；draft 378384199（exe + latest.yml�
 
 CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml）已公开发布，孤儿 draft 378391524（仅 blockmap）已删除（204）。公开发布时间 2026-08-28T09:47:46Z。URL: https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.3
 注意：latest.yml 仍随 release 发布（electron-builder 固定产物），但 v0.1.3 应用内已无自动更新触发点，该文件仅供手动安装的 electron-updater 工具或未来需要时使用。
+
+## 2026-08-28 | v0.1.4：工作目录显示与运行归档目录修复
+
+### 背景与本次做了什么
+
+用户在桌面版里与内置 Agent 对话时发现两个问题：`get_env_info` 报告的 cwd 是安装目录 `resources\`（而非设置的工作目录），且面板运行归档 `runs/run_*` 落在安装目录里。经核实：前者是 `tool_get_env_info` 直接返回进程 `os.getcwd()`（desktop/main.js 以 `cwd: APP_ROOT` 启动后端导致）；后者是 `qevos_bridge._RUNS_DIR = SENZA_AGENT_DIR/runs`，而 `SENZA_AGENT_DIR` 被固定为安装目录。本次修复：
+
+1. **`tools/standard.py`**：新增 `_effective_working_dir()`，经 `load_config()`（合并 config.json 与 `SENZA_AGENT_WORKING_DIR` 环境变量，与 agent.py 的 `config.working_dir or os.getcwd()` 完全同源）取实际生效目录；`tool_get_env_info` 的 `cwd` 改用它。异常时回落进程 cwd。
+2. **`qevos_bridge.py`**：`_RUNS_DIR` 改为 `_resolve_runs_dir()` 动态解析，优先级：显式 `SENZA_AGENT_RUNS_DIR` > `~/.senza-agent/runs`（当 `SENZA_AGENT_DIR` 路径含 `resources` 组件，即打包桌面版）> `<SENZA_AGENT_DIR>/runs`（开发/仓库布局）。`resources` 匹配大小写不敏感（Windows 的 `Resources`）。注意 `_RUNS_DIR` 仍是模块导入时求值——webserver 进程启动后 env 变化不影响已解析值，符合预期。
+3. **`cli.py`**：删除 `ensure_env_defaults()` 里 `SENZA_AGENT_RUNS_DIR=./runs` 的 setdefault 与 `DEFAULT_RUNS_DIR` 常量。该变量此前全库无消费方（死配置）；修好桥接后它反而会以 `./runs` 抢占解析优先级、掩盖打包场景，必须删。
+
+### 验证
+
+- 单元：`_resolve_runs_dir` 四场景（仓库布局、`/opt/.../resources`、显式覆盖、自定义 agent dir）+ 空白值忽略，全过。
+- E2E（真实启动 `--web` dashboard + `/api/runs-index`）：A 显式覆盖可见 ✓；B 无 env 时仍读 `PROJ/runs`（CLI/开发行为不变）✓；C `SENZA_AGENT_DIR` 指向 resources 时只读 `~/.senza-agent/runs`、不受仓库诱饵目录污染 ✓（首轮 C 失败正是 cli.py setdefault 所致，删除后通过）。
+- 工作目录一致性：`SENZA_AGENT_WORKING_DIR=/tmp/senza-wd-e2e` 时 `/api/env` 与 `tool_get_env_info()['output']['cwd']` 一致 ✓。
+- `pytest tests/`：326 passed, 3 skipped。
+
+### 踩坑
+
+- cli.py 的 setdefault 是"复活"的死配置：v0.1.3 前无害（无人消费），修复桥接后变成优先级 1 的错误默认。删除死代码要彻底，否则修复时它会反咬。
+- Linux `Path` 下 Windows 反斜杠路径是单个 part，测试场景 2b 用 `PureWindowsPath` 验证 parts 拆分才确认 `resources` 检测在真实 Windows 上成立。
+
+### 遗留项
+
+- 桌面端用户升级到 v0.1.4 后，旧安装目录里的 `resources\runs` 归档不会自动迁移（新归档写到 `~\.senza-agent\runs`）。
