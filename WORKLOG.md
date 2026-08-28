@@ -441,3 +441,34 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 Actions 自动构建约 5-10 分钟，产物出现在 GitHub Releases（含自动
 release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts 下载。
+
+## 2026-08-28 | 首个自动发布 Release 跑通（v0.1.0）
+
+### 做了什么
+- 将本地旧 v0.1.0 tag（指向旧提交 1f30aa9，未发过 Release）重打到 HEAD 后推送，
+  触发新 workflow。
+- 首次 CI 失败：构建本身成功（exe + blockmap 已产出），崩溃发生在发布元数据
+  阶段——updateInfoBuilder 的 computeChannelNames 对 null publishConfig 读
+  .channel。根因：package.json 没有 repository 信息 + --publish never 时
+  publish 配置为 null。
+- 修复：package.json 顶层补 npm 标准 repository 字段（注意：放 build. 内会
+  被 schema 拒绝）；发布改用 electron-builder 原生 onTag 策略（草稿 Release，
+  自动含 exe + blockmap + latest.yml），移除 softprops 二次发布；手动触发
+  仍 --publish never。本机 stub 构建 -WX 0 警告复验通过后提交 7752479。
+- 第二次 CI run 成功（run 33155966808）。
+
+### 结果
+- Release: https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.0
+  资产：SenzaAgent-Setup-0.1.0.exe（78.0 MB）+ latest.yml。
+- 清理：失败 run 留下的只有 blockmap 的孤儿草稿 Release 已删除；正式草稿
+  已手动 publish（electron-builder 默认发草稿，发布按钮在 Releases 页）。
+
+### 踩坑与结论
+- electron-builder 的 publish 元数据生成即使 --publish never 也会走
+  blockmap → updateInfo 路径，缺 repository 信息直接 TypeError。repository
+  必须放 package.json 顶层，不是 build. 下。
+- 首次失败 run 因产物命名/发布流程变化留下垃圾草稿，处理 tag 重打/失败重跑
+  时要检查 Releases 页草稿列表。
+- 以后发版流程：改 desktop/package.json version → commit →
+  git tag vX.Y.Z && git push origin vX.Y.Z → CI 构建草稿 Release →
+  Releases 页点 publish。
