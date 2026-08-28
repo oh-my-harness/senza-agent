@@ -309,12 +309,39 @@ function createWindow() {
 
 // ── Menu ───────────────────────────────────────────────────────────────────
 
+const APP_DESCRIPTION =
+  'senza-agent — 开箱即用的通用 AI Agent\n' +
+  '基于 Senza SDK 构建：终端 CLI、Web 面板、桌面应用三端一体，\n' +
+  '内置文件读写、命令执行、联网搜索、技能系统等工具。\n' +
+  '项目主页: https://github.com/oh-my-harness/senza-agent';
+
+function showAboutDialog() {
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'About senza-agent',
+    message: `senza-agent v${app.getVersion()}`,
+    detail: APP_DESCRIPTION,
+    buttons: ['检查更新', '项目主页', '确定'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  }).then(({ response }) => {
+    if (response === 0) {
+      checkForUpdatesInteractive(win);
+    } else if (response === 1) {
+      shell.openExternal('https://github.com/oh-my-harness/senza-agent');
+    }
+  });
+}
+
 function setupMenu() {
   const template = [
     {
       label: 'senza-agent',
       submenu: [
-        { role: 'about', label: 'About senza-agent' },
+        { label: 'About senza-agent', click: () => showAboutDialog() },
+        { label: 'Check for Updates…', click: () => checkForUpdatesInteractive(BrowserWindow.getFocusedWindow() || mainWindow) },
         { type: 'separator' },
         { role: 'reload', label: 'Reload' },
         { role: 'toggleDevTools', label: 'Toggle Developer Tools' },
@@ -375,54 +402,69 @@ ipcMain.handle('desktop:pick-folder', async (event) => {
   return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
 });
 
-// ── Auto-update (electron-updater) ─────────────────────────────────────────
+// ── Update check (manual, from the app menu) ───────────────────────────────
 //
-// Update source: GitHub Releases of this repository (electron-builder
-// publishes exe + latest.yml on every v* tag). electron-updater reads the
-// repository URL from the app's package.json "repository" field at build
-// time and anonymously fetches latest.yml — no token needed for a public
-// repo. Updates are checked on startup and every 6 hours; download happens
-// in the background, install on explicit user confirmation (quitAndInstall).
-// Dev mode and non-packaged runs are skipped entirely.
+// No background polling and no automatic download: updates are only checked
+// when the user clicks "Check for Updates" in the senza-agent menu. If a
+// newer release exists the user is asked whether to download + install it
+// right away; the download itself installs on restart (or app quit).
+// Dev / non-packaged runs are skipped entirely.
 
-const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let _updateBusy = false;
 
-function setupAutoUpdate() {
-  if (!app.isPackaged) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;   // safety net: install even if user dismisses the prompt
-  autoUpdater.logger = console;
-
-  autoUpdater.on('update-downloaded', (info) => {
-    const v = info && info.version ? info.version : '';
-    console.log(`[desktop] update downloaded: v${v}`);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('desktop:update-downloaded', { version: v });
+async function checkForUpdatesInteractive(win) {
+  if (!app.isPackaged) {
+    dialog.showMessageBox(win, { type: 'info', message: '开发模式下不检查更新。' });
+    return;
+  }
+  if (_updateBusy) return;
+  _updateBusy = true;
+  try {
+    // Disable auto-download while probing: we only want version metadata.
+    autoUpdater.autoDownload = false;
+    autoUpdater.logger = console;
+    const res = await autoUpdater.checkForUpdates();
+    const ui = res && res.updateInfo ? res.updateInfo : null;
+    const latest = ui && ui.version ? ui.version : '';
+    const hasUpdate = !!latest && latest !== app.getVersion();
+    const r = await dialog.showMessageBox(win, {
+      type: 'info',
+      message: hasUpdate ? `发现新版本 v${latest}` : '当前已是最新版本',
+      detail: hasUpdate
+        ? `当前版本 v${app.getVersion()}，最新版本 v${latest}。是否下载并安装？`
+        : `当前版本 v${app.getVersion()} 已是最新。`,
+      buttons: hasUpdate ? ['下载并安装', '以后再说'] : ['确定'],
+      defaultId: 0,
+      cancelId: hasUpdate ? 1 : 0,
+    });
+    if (hasUpdate && r.response === 0) {
+      autoUpdater.autoDownload = true;
+      await autoUpdater.downloadUpdate();
+      const d = await dialog.showMessageBox(win, {
+        type: 'info',
+        message: `v${latest} 已下载完成`,
+        detail: '重启应用后自动安装。现在重启吗？',
+        buttons: ['立即重启安装', '下次启动时安装'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (d.response === 0) {
+        // quitAndInstall terminates the app (before-quit SIGTERMs the Python
+        // backend), then hands over to the NSIS installer.
+        setTimeout(() => autoUpdater.quitAndInstall(false, true), 150);
+      }
     }
-  });
-
-  autoUpdater.on('error', (err) => {
-    // Offline, GitHub unreachable, etc. — non-fatal, never block the app.
-    console.error('[desktop] auto-update error:', err && err.message);
-  });
-
-  const check = () => {
-    autoUpdater.checkForUpdates().catch((err) =>
-      console.error('[desktop] update check failed:', err && err.message));
-  };
-  check();
-  setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+  } catch (err) {
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      message: '检查更新失败',
+      detail: (err && err.message) || String(err),
+    });
+  } finally {
+    _updateBusy = false;
+  }
 }
 
-// Renderer → confirm installing the downloaded update now (quits the app,
-// which also SIGTERMs the Python backend, then runs the NSIS installer).
-ipcMain.handle('desktop:install-update', async () => {
-  // Give the ack a moment to flush, then hand over to the installer.
-  setTimeout(() => {
-    autoUpdater.quitAndInstall(false, true);  // isSilent=false → wizard; isForceRunAfter=true
-  }, 150);
-  return true;
-});
 
 app.whenReady().then(async () => {
   setupMenu();
@@ -450,7 +492,6 @@ app.whenReady().then(async () => {
 
   if (_loadingWin) _loadingWin.close();
   createWindow();
-  setupAutoUpdate();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -462,7 +503,6 @@ app.on('window-all-closed', () => {
     agentProc.kill('SIGTERM');
     agentProc = null;
   }
-  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {

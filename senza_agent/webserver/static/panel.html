@@ -7976,31 +7976,9 @@ fetch('/api/version').then(r => r.json()).then(d => {
     }
   });
 })();
-// ── 桌面版：自动更新提示 ──────────────────────────────────────────────────
-// 仅 Electron 桌面版生效（preload 注入了 senzaDesktop）。后台下载完成后
-// 弹出持久提示条，用户点「立即重启并安装」→ IPC → quitAndInstall。
-(function setupDesktopUpdateBanner() {
-  if (!window.senzaDesktop || typeof window.senzaDesktop.onUpdateDownloaded !== 'function') return;
-  window.senzaDesktop.onUpdateDownloaded((info) => {
-    const v = (info && info.version) || '';
-    const wrap = document.createElement('div');
-    wrap.id = 'updateBanner';
-    wrap.style.cssText = 'position:fixed; right:16px; bottom:16px; z-index:10000; background:var(--bg3,#161b22); border:1px solid var(--blue,#58a6ff); border-radius:8px; padding:12px 14px; color:var(--text,#e6edf3); font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.4); max-width:340px;';
-    wrap.innerHTML =
-      '<div style="margin-bottom:8px;">新版本 v' + v + ' 已就绪，重启后自动安装。</div>' +
-      '<div style="display:flex; gap:8px; justify-content:flex-end;">' +
-      '<button id="updLater" style="background:none; border:1px solid var(--border,#30363d); color:inherit; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12px;">下次启动时</button>' +
-      '<button id="updNow" style="background:linear-gradient(135deg,#1f6feb,#3b82f6); border:none; color:#fff; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:12px;">立即安装</button>' +
-      '</div>';
-    document.body.appendChild(wrap);
-    wrap.querySelector('#updLater').addEventListener('click', () => wrap.remove());
-    wrap.querySelector('#updNow').addEventListener('click', async () => {
-      wrap.querySelector('#updNow').disabled = true;
-      toast('正在退出并安装更新…');
-      try { await window.senzaDesktop.installUpdate(); } catch (e) { console.error(e); }
-    });
-  });
-})();
+// ── 桌面版更新说明 ──────────────────────────────────────────────────────
+// 不做自动更新/横幅提示。检查更新入口在桌面版菜单栏：
+// senza-agent → About senza-agent / Check for Updates…（手动触发，原生对话框交互）。
 </script>
 </body>
 </html>

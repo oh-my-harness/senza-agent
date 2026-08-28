@@ -12,11 +12,6 @@ contextBridge.exposeInMainWorld('senzaDesktop', {
   version: process.env.APP_VERSION || '0.1.0',
   // Resolves to the picked absolute path, or null if the user cancelled.
   pickFolder: () => ipcRenderer.invoke('desktop:pick-folder'),
-  // Resolves when the downloaded update has been handed to the installer.
-  installUpdate: () => ipcRenderer.invoke('desktop:install-update'),
-  // onUpdateDownloaded(cb) — cb receives { version } when an update finished
-  // downloading in the background.
-  onUpdateDownloaded: (cb) => ipcRenderer.on('desktop:update-downloaded', (_e, info) => cb(info)),
 });
 
 // ── Native folder picker (desktop app only) ────────────────────────────────

@@ -539,3 +539,13 @@ release notes）。手动测试：Actions 页面 Run workflow，到 Artifacts �
 
 CI run 33159967448 success（~1 分钟）；draft 378384199（exe + latest.yml）通过 API PATCH draft:false 公开发布，孤儿 draft 378384198（仅 blockmap）已删除（204）。公开发布时间 2026-08-28T09:37:22Z，latest.yml 已报 0.1.2（sha512 + blockmap 具备差量更新条件）。URL: https://github.com/oh-my-harness/senza-agent/releases/tag/v0.1.2
 遗留项：目录选择对话框与更新横幅的 UI 级验证需 Windows 实机（本机无 X server，无法驱动 Electron 渲染进程）；卸载不清理 ~/.senza-agent（含 API key、会话数据），维持现状。
+
+## 2026-08-28 | v0.1.3：按用户要求移除自动更新，改为手动检查
+
+用户明确"不要自动更新"。变更：
+- 删除 setupAutoUpdate（启动+6h 轮询+autoDownload）、preload 的 installUpdate/onUpdateDownloaded、panel 更新横幅——全部回退为无后台行为。
+- About senza-agent 改为自定义原生对话框：应用描述（基于 Senza SDK 的开箱即用通用 AI Agent、三端形态、主页链接）+ 三个按钮：检查更新 / 项目主页 / 确定。
+- 菜单栏 senza-agent 下新增 Check for Updates…：手动 checkForUpdates（不自动下载）→ 发现新版则询问"下载并安装/以后再说"→ 下载完成再问"立即重启安装/下次启动时"→ quitAndInstall(false,true)。失败弹 warning。_updateBusy 防重入。
+- electron-updater 依赖保留（检查/下载/安装仍由它完成），仅去掉自动触发。
+
+验证：node -c 通过；mock electron 测试覆盖四条路径（有新版全流程/已最新/网络错误/About 结构与菜单构建）全部通过；真实 electron 无头启动到 Dashboard 正常。
