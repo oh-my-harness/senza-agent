@@ -61,7 +61,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -72,6 +72,8 @@
       "shortcutName": "SenzaAgent",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "include": "installer.nsh"
     },
     "linux": {

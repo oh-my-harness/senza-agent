@@ -235,3 +235,31 @@ POST /api/env → save_settings（settings.json + config.json 镜像 + os.enviro
 ### 验证
 - ACL 测试 8 passed；全量 326 passed / 3 skipped（基线 318 + 新增 8）。
 - panel.html node --check 通过。
+
+## 2026-08-28 | 全部品牌图标统一为 OIP 图（预生成多尺寸 ICO）
+
+### 背景
+上次 d9a12a4 把 desktop/icon.png 与 LOGO_256.png 换成了 OIP 图（经像素比对与
+/data/xuhongming/OIP.webp 内容一致）。但用户反馈任务栏/安装/卸载图标仍是旧图：
+其 Windows 安装包是改图前构建的，且 electron-builder 需在构建机上现做 PNG→ICO
+转换。本次把 Windows 侧图标源改为预生成的多尺寸 ICO，减少构建期变量。
+
+### 改动
+- 新增 `desktop/build/icon.ico`：由 desktop/icon.png（OIP 图）生成，含
+  16/24/32/48/64/128/256 七档尺寸（256 档为 PNG 压缩条目，Vista+ 标准）。
+- `desktop/package.json`：`win.icon`、`nsis.installerIcon`、
+  `nsis.uninstallerIcon` 均指向 `build/icon.ico`（mac/linux 仍用 icon.png）。
+  electron-builder 链路（26.15.3）：rcedit 把 win.icon 写进应用 exe 资源；
+  NsisTarget 将其设为 MUI_ICON+MUI_UNICON（安装与卸载界面图标）。
+
+### 验证
+- ICO 结构解析：7 个条目齐全，最大 256x256（≥256 满足 electron-builder 校验）。
+- ico 最大帧回读与 icon.png 逐像素比对：RGBA 平均差 0.0（同一画面）。
+- node 侧模拟 resolveSourceFile + getIcoMaxSize：解析到 build/icon.ico，max 256 OK。
+- package.json JSON 校验通过；build/ 不在 .gitignore 内。
+
+### 说明
+- 面板页左上角 logo 与 favicon（/LOGO_256.png）源文件早已是 OIP 图；浏览器如
+  显示旧图属缓存，Ctrl+F5 即可。
+- 用户侧要生效需在 Windows 构建机 git pull 后重新打包安装；旧任务栏图标还需
+  清 Windows 图标缓存（ie4uinit -show 或删 IconCache.db 重启 explorer）。
