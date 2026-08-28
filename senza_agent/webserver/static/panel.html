@@ -2265,6 +2265,38 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
           <label for="setProxy">HTTP 代理 <span class="set-hint-inline">（访问外部 API 用，需含 http:// 和端口，本地自动跳过）</span></label>
           <input type="text" id="setProxy" placeholder="http://127.0.0.1:7897">
         </div>
+
+        <div class="set-fg">
+          <label for="setWebProvider">联网搜索 Provider <span class="set-hint-inline">（联网搜索工具的后端；bing 免 Key、国内外可达，默认 bing）</span></label>
+          <select id="setWebProvider">
+            <option value="bing">bing — 免 Key，默认</option>
+            <option value="duckduckgo">duckduckgo</option>
+            <option value="google_cse">google_cse — 需 API Key</option>
+            <option value="tavily">tavily — 需 API Key</option>
+            <option value="serp">serp — 需 API Key</option>
+            <option value="searxng">searxng — 自建实例</option>
+          </select>
+        </div>
+
+        <div class="set-fg">
+          <label for="setWebBaseUrl">搜索入口 URL <span class="set-hint-inline">（provider 为 bing/searxng 时的搜索端点，留空=默认）</span></label>
+          <input type="text" id="setWebBaseUrl" placeholder="https://www.bing.com/search">
+        </div>
+
+        <div class="set-fg">
+          <label for="setWebKey">搜索 API Key <span class="set-hint-inline">（tavily/serp/google_cse 需要填写；bing/duckduckgo 留空）</span></label>
+          <input type="text" id="setWebKey" placeholder="（bing/duckduckgo 无需 Key）">
+        </div>
+
+        <div class="set-fg">
+          <label for="setWebMaxResults">搜索结果条数 <span class="set-hint-inline">（每次搜索返回的结果数，默认 5）</span></label>
+          <input type="number" id="setWebMaxResults" placeholder="5" min="1" max="20">
+        </div>
+
+        <div class="set-fg">
+          <label for="setWebFetchChars">网页抓取字符上限 <span class="set-hint-inline">（单次抓取网页正文的截断上限，默认 12000）</span></label>
+          <input type="number" id="setWebFetchChars" placeholder="12000" min="1000">
+        </div>
       </div>
 
       <!-- 高级设置 · 局域网 -->
@@ -2320,6 +2352,16 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
             <option value="medium">medium — 中等</option>
             <option value="high">high — 深度</option>
           </select>
+        </div>
+
+        <div class="set-fg">
+          <label for="setCmpContextWindow">压缩触发窗口 tokens <span class="set-hint-inline">（compaction.context_window，超过即触发深度压缩；留空=运行时默认 200000）</span></label>
+          <input type="number" id="setCmpContextWindow" placeholder="（留空=默认 200000）" min="1024">
+        </div>
+
+        <div class="set-fg">
+          <label for="setCmpReserveTokens">压缩预留 tokens <span class="set-hint-inline">（compaction.reserve_tokens，压缩后为新回复预留的空间，留空=默认 16384）</span></label>
+          <input type="number" id="setCmpReserveTokens" placeholder="（留空=默认 16384）" min="256">
         </div>
       </div>
     </div>
@@ -7644,6 +7686,17 @@ fetch('/api/version').then(r => r.json()).then(d => {
       document.getElementById('setToolFeedback').value = env.MAX_TOOL_FEEDBACK_CHARS || '';
       document.getElementById('setMaxTokens').value    = env.LLM_MAX_TOKENS || '';
       document.getElementById('setCtxWindow').value    = env.LLM_CONTEXT_WINDOW || '';
+      // 联网搜索（web 配置，来自 config.json / settings.json 镜像）
+      const web = env.web || {};
+      document.getElementById('setWebProvider').value    = web.provider || 'bing';
+      document.getElementById('setWebBaseUrl').value     = web.base_url || '';
+      document.getElementById('setWebKey').value         = web.api_key || '';
+      document.getElementById('setWebMaxResults').value  = (web.max_results != null && web.max_results !== '') ? web.max_results : '';
+      document.getElementById('setWebFetchChars').value  = (web.max_fetch_chars != null && web.max_fetch_chars !== '') ? web.max_fetch_chars : '';
+      // 深度压缩（compaction，来自 config.json / settings.json 镜像）
+      const cmp = env.compaction || {};
+      document.getElementById('setCmpContextWindow').value = (cmp.context_window != null && cmp.context_window !== '') ? cmp.context_window : '';
+      document.getElementById('setCmpReserveTokens').value = (cmp.reserve_tokens != null && cmp.reserve_tokens !== '') ? cmp.reserve_tokens : '';
     } catch (e) {
       // Surface the failure instead of silently showing an empty form — most
       // commonly an old backend without /api/env (404), which used to look like
@@ -7806,8 +7859,20 @@ fetch('/api/version').then(r => r.json()).then(d => {
       LLM_MAX_TOKENS:  document.getElementById('setMaxTokens').value.trim(),
       // 温度已按模型拆到各槽位；空值 = 从 .env 删键，顺手清掉旧的全局 LLM_TEMPERATURE，
       // 否则它会继续压过新的默认值 0.8。
-      LLM_TEMPERATURE: '',
       LLM_CONTEXT_WINDOW: document.getElementById('setCtxWindow').value.trim(),
+      // 联网搜索配置 — 嵌套在 web 对象中（镜像写入 config.json）
+      web: {
+        provider:      document.getElementById('setWebProvider').value,
+        base_url:      document.getElementById('setWebBaseUrl').value.trim(),
+        api_key:       document.getElementById('setWebKey').value.trim(),
+        max_results:   document.getElementById('setWebMaxResults').value.trim(),
+        max_fetch_chars: document.getElementById('setWebFetchChars').value.trim(),
+      },
+      // 深度压缩参数 — 嵌套在 compaction 对象中（镜像写入 config.json）
+      compaction: {
+        context_window: document.getElementById('setCmpContextWindow').value.trim(),
+        reserve_tokens: document.getElementById('setCmpReserveTokens').value.trim(),
+      },
     };
     const btn = document.getElementById('setSave');
     btn.disabled = true; btn.textContent = '保存中…';

@@ -162,3 +162,54 @@ config.json 修不了其他用户/Windows 机器——新装环境无 config.jso
 - `pytest tests/test_config.py` 3 passed。
 - 全量基线：247 passed / 3 failed（均为存量 create_tool parameters 问题，与本次无关）。
 - 仓库内 `duckduckgo` 字面量清零（仅剩注释里的原因说明）。
+
+
+## 2026-08-28 | settings.json 扩容为桌面设置全量存储 + 保存即时生效
+
+### 需求与决策
+用户要求：桌面版（看板）设置里的所有配置统一存入 `~/.senza-agent/settings.json`，
+修改后立即生效。此前 web 搜索配置只存 config.json，面板上没有编辑入口；compaction
+参数同理。经确认（ask_user）采用：
+- settings.json 为主存储，save_settings 全量写 settings.json，并把 web/compaction
+  两节**镜像**写回 config.json（启动链路 load_config 不变，两文件语义一致）；
+- DASHBOARD_HOST/PORT 等重启型配置持久化但提示需重启看板进程（维持现状）。
+
+### 改动
+- `senza_agent/config.py`：
+  - 新增 `_mirror_to_config_file()`：save_settings 后把 web/compaction 节整节替换
+    写入 config.json（best-effort，失败不影响 settings 已落盘）；
+  - `_apply_file` 增加 `_to_int/_to_float` 数值强转（settings.json 里嵌套子值都是
+    字符串，之前 web.max_results 会变成 "8"）；
+  - `_apply_env` 新增 SENZA_AGENT_ADVISOR_INTERVAL / WRAPUP_TURNS / BUDGET_LIMIT
+    覆盖（save_settings 本就把 behavior.* 展开成这些 env 键，load_config 此前不读）。
+- `senza_agent/webserver/qevos_bridge.py`：
+  - `_api_env_get`：补 LLM_CONTEXT_WINDOW 键；新增返回 web/compaction/behavior
+    结构化节（从 load_config() 合并结果读取，GET 即所见即所得）；
+  - `_api_env_post`：save_settings 后调 load_settings_into_env() 刷新 env。
+- `senza_agent/webserver/static/panel.html`：
+  - setPaneOther 新增联网搜索 5 项（provider 下拉 bing/duckduckgo/google_cse/
+    tavily/serp/searxng、搜索入口 URL、API Key、结果条数、抓取字符上限）；
+  - setPaneRuntime 新增 compaction 两项（context_window / reserve_tokens）；
+  - openSettings 读 env.web/env.compaction 填充；保存 payload 增 web/compaction
+    嵌套对象。
+- `tests/test_config.py`：新增 4 个往返测试（镜像写入、数值强转、嵌套 env 展开、
+  保存→模拟重启 roundtrip）。
+
+### 立即生效链路（验证过）
+POST /api/env → save_settings（settings.json + config.json 镜像 + os.environ）
+→ 空闲时 rebuild_harness()（load_config 重读全部节）→ 新 harness 用新 web 配置。
+任务运行中则 pending_rebuild，任务结束自动重建。DASHBOARD_HOST/PORT 仍需进程重启
+（前端已有提示）。
+
+### 踩坑
+- edit SWAP 范围少覆盖一行导致 config.py 出现重复函数体、qevos_bridge 断在
+  _apply_env docstring 中间——均靠 ast.parse + 复读修复；教训：SWAP 前先确认
+  构造完整边界。
+- panel.html 大文件插错 pane 位置（set-body 外）——用 div 配对计数脚本校验。
+
+### 验证
+- `pytest tests/`：318 passed / 3 skipped（基线 314 + 新增 4）。
+- 临时 HOME 端到端：POST /api/env（web+compaction+behavior+LLM 槽位）→ 200
+  rebuilt:true → GET 回读全部一致；settings.json/config.json 内容正确；
+  load_config() 数值类型正确（max_results==8 而非 "8"）。
+- panel.html：node --check 通过；set-body div 配对平衡；新字段 id 唯一。

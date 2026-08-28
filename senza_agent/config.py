@@ -133,49 +133,55 @@ def _apply_file(cfg: Config, data: dict[str, Any]) -> None:
     if "provider_type" in data:
         cfg.provider_type = str(data["provider_type"])
 
+    def _to_int(v: Any, fallback: Optional[int]) -> Optional[int]:
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return fallback
+
+    def _to_float(v: Any, fallback: Optional[float]) -> Optional[float]:
+        try:
+            return float(str(v).strip())
+        except (TypeError, ValueError):
+            return fallback
+
     compaction_data = data.get("compaction")
     if isinstance(compaction_data, dict):
         c = cfg.compaction
-        if "context_window" in compaction_data:
-            c.context_window = compaction_data["context_window"]
-        if "max_tokens" in compaction_data:
-            c.max_tokens = compaction_data["max_tokens"]
-        if "reserve_tokens" in compaction_data:
-            c.reserve_tokens = compaction_data["reserve_tokens"]
-        if "keep_recent_tokens" in compaction_data:
-            c.keep_recent_tokens = compaction_data["keep_recent_tokens"]
+        c.context_window = _to_int(compaction_data.get("context_window", c.context_window), c.context_window)
+        c.max_tokens = _to_int(compaction_data.get("max_tokens", c.max_tokens), c.max_tokens)
+        c.reserve_tokens = _to_int(compaction_data.get("reserve_tokens", c.reserve_tokens), c.reserve_tokens)
+        c.keep_recent_tokens = _to_int(compaction_data.get("keep_recent_tokens", c.keep_recent_tokens), c.keep_recent_tokens)
         if "model" in compaction_data:
             c.model = compaction_data["model"]
-        if "model_context_window" in compaction_data:
-            c.model_context_window = compaction_data["model_context_window"]
-        if "model_max_tokens" in compaction_data:
-            c.model_max_tokens = compaction_data["model_max_tokens"]
+        c.model_context_window = _to_int(compaction_data.get("model_context_window", c.model_context_window), c.model_context_window)
+        c.model_max_tokens = _to_int(compaction_data.get("model_max_tokens", c.model_max_tokens), c.model_max_tokens)
 
     web_data = data.get("web")
     if isinstance(web_data, dict):
         if "provider" in web_data:
-            cfg.web.provider = web_data["provider"]
+            cfg.web.provider = str(web_data["provider"])
         if "base_url" in web_data:
-            cfg.web.base_url = web_data["base_url"]
+            cfg.web.base_url = str(web_data["base_url"])
         if "api_key" in web_data:
-            cfg.web.api_key = web_data["api_key"]
+            cfg.web.api_key = str(web_data["api_key"])
         if "max_results" in web_data:
-            cfg.web.max_results = web_data["max_results"]
+            cfg.web.max_results = _to_int(web_data["max_results"], cfg.web.max_results)
         if "fetch_timeout_secs" in web_data:
-            cfg.web.fetch_timeout_secs = web_data["fetch_timeout_secs"]
+            cfg.web.fetch_timeout_secs = _to_int(web_data["fetch_timeout_secs"], cfg.web.fetch_timeout_secs)
         if "max_fetch_chars" in web_data:
-            cfg.web.max_fetch_chars = web_data["max_fetch_chars"]
+            cfg.web.max_fetch_chars = _to_int(web_data["max_fetch_chars"], cfg.web.max_fetch_chars)
 
     behavior_data = data.get("behavior")
     if isinstance(behavior_data, dict):
         if "advisor_interval" in behavior_data:
-            cfg.behavior.advisor_interval = behavior_data["advisor_interval"]
+            cfg.behavior.advisor_interval = _to_int(behavior_data["advisor_interval"], cfg.behavior.advisor_interval)
         if "advisor_model" in behavior_data:
             cfg.behavior.advisor_model = behavior_data["advisor_model"]
         if "budget_limit" in behavior_data:
-            cfg.behavior.budget_limit = behavior_data["budget_limit"]
+            cfg.behavior.budget_limit = _to_float(behavior_data["budget_limit"], cfg.behavior.budget_limit)
         if "wrapup_turns" in behavior_data:
-            cfg.behavior.wrapup_turns = behavior_data["wrapup_turns"]
+            cfg.behavior.wrapup_turns = _to_int(behavior_data["wrapup_turns"], cfg.behavior.wrapup_turns)
         if "thinking_level" in behavior_data:
             cfg.behavior.thinking_level = behavior_data["thinking_level"]
 
@@ -217,6 +223,24 @@ def _apply_env(cfg: Config) -> None:
     env_thinking = os.environ.get("SENZA_AGENT_THINKING_LEVEL")
     if env_thinking:
         cfg.behavior.thinking_level = env_thinking
+    env_advisor_interval = os.environ.get("SENZA_AGENT_ADVISOR_INTERVAL")
+    if env_advisor_interval:
+        try:
+            cfg.behavior.advisor_interval = int(env_advisor_interval)
+        except ValueError:
+            pass
+    env_wrapup = os.environ.get("SENZA_AGENT_WRAPUP_TURNS")
+    if env_wrapup:
+        try:
+            cfg.behavior.wrapup_turns = int(env_wrapup)
+        except ValueError:
+            pass
+    env_budget = os.environ.get("SENZA_AGENT_BUDGET_LIMIT")
+    if env_budget:
+        try:
+            cfg.behavior.budget_limit = float(env_budget)
+        except ValueError:
+            pass
 
 
 def _apply_derived(cfg: Config) -> None:
@@ -314,11 +338,46 @@ def load_settings_into_env() -> None:
             os.environ[key] = val
 
 
+def _mirror_to_config_file(existing: dict[str, Any]) -> None:
+    """Mirror the structured sections of settings.json into config.json.
+
+    settings.json is the single write path from the dashboard; config.json is
+    what ``load_config()`` reads at startup.  Keeping the ``web`` /
+    ``compaction`` sections mirrored (not merged — a full replace with the
+    latest saved values) keeps the two files semantically consistent without
+    changing the startup sequence.
+    """
+    cfg_path = _config_file()
+    cfg: dict[str, Any] = {}
+    if cfg_path.is_file():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    for section in ("web", "compaction"):
+        data = existing.get(section)
+        if isinstance(data, dict) and data:
+            cfg[section] = dict(data)
+        else:
+            cfg.pop(section, None)
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # settings.json is already persisted; mirroring is best-effort
+
+
 def save_settings(data: dict[str, Any]) -> dict[str, str]:
     """Persist settings to ``~/.senza-agent/settings.json`` and update ``os.environ``.
 
     Only non-empty string values are kept; empty values remove the key
-    (matching the frontend's "empty = delete" convention).
+    (matching the frontend's "empty = delete" convention).  Nested dicts
+    (``behavior`` / ``compaction`` / ``web``) merge sub-key-wise.  After
+    writing, the ``web`` / ``compaction`` sections are mirrored into
+    ``config.json`` so ``load_config()`` picks them up on the next start
+    (and on ``rebuild_harness()``).
     Returns the new settings dict as it was written.
     """
     # Merge with existing file contents so partial updates work.
@@ -332,7 +391,8 @@ def save_settings(data: dict[str, Any]) -> dict[str, str]:
 
     _API_KEY_SUFFIX = "_API_KEY"
     for key, val in data.items():
-        # Handle nested dicts (e.g. behavior, compaction) — merge into existing sub-objects
+        # Handle nested dicts (e.g. behavior, compaction, web) — merge into
+        # existing sub-objects
         if isinstance(val, dict):
             sub = existing.setdefault(key, {})
             if not isinstance(sub, dict):
@@ -365,4 +425,5 @@ def save_settings(data: dict[str, Any]) -> dict[str, str]:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_to_config_file(existing)
     return existing

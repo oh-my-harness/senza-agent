@@ -1097,7 +1097,7 @@ class QevosAPI:
             "PREFERRED_API", "MAX_ITERS", "INSTANCE_NAME",
             "HTTPS_PROXY", "HTTP_PROXY",
             "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_ALLOW", "DASHBOARD_DENY",
-            "MAX_TOOL_FEEDBACK_CHARS", "LLM_MAX_TOKENS",
+            "MAX_TOOL_FEEDBACK_CHARS", "LLM_MAX_TOKENS", "LLM_CONTEXT_WINDOW",
         ]
         result = {}
         for k in keys:
@@ -1107,13 +1107,37 @@ class QevosAPI:
                 v = os.environ.get("OPENAI_API_BASE", "")
             result[k] = v
         result["configured"] = bool(result.get("OPENAI_API_KEY") and result.get("OPENAI_BASE_URL"))
-        # Also return behavior settings (nested in settings.json)
+        # Structured settings (behavior / web / compaction) — read from the
+        # merged config so settings.json-driven values show up here.
+        result["THINKING_LEVEL"] = ""
+        result["web"] = {}
+        result["compaction"] = {}
         try:
             from senza_agent.config import load_config
             cfg = load_config()
             result["THINKING_LEVEL"] = cfg.behavior.thinking_level or ""
+            result["web"] = {
+                "provider": cfg.web.provider or "",
+                "base_url": cfg.web.base_url or "",
+                "api_key": cfg.web.api_key or "",
+                "max_results": cfg.web.max_results,
+                "fetch_timeout_secs": cfg.web.fetch_timeout_secs,
+                "max_fetch_chars": cfg.web.max_fetch_chars,
+            }
+            result["compaction"] = {
+                k: getattr(cfg.compaction, k)
+                for k in ("context_window", "max_tokens", "reserve_tokens",
+                          "keep_recent_tokens", "model", "model_context_window",
+                          "model_max_tokens")
+            }
+            result["behavior"] = {
+                "advisor_interval": cfg.behavior.advisor_interval,
+                "advisor_model": cfg.behavior.advisor_model or "",
+                "budget_limit": cfg.behavior.budget_limit,
+                "wrapup_turns": cfg.behavior.wrapup_turns,
+            }
         except Exception:
-            result["THINKING_LEVEL"] = ""
+            pass
         return web.json_response(result)
 
     async def _api_env_post(self, request: web.Request) -> web.Response:
@@ -1129,8 +1153,11 @@ class QevosAPI:
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "invalid JSON"}, status=400)
 
-        from senza_agent.config import save_settings
+        from senza_agent.config import save_settings, load_settings_into_env
         save_settings(body)
+        # Structured sections (web/compaction) live in config.json (mirrored
+        # by save_settings); refresh env so a subsequent GET reflects them.
+        load_settings_into_env()
 
         # Hot-reload: rebuild harness if idle; otherwise defer to task end.
         rebuilt = False
