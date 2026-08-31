@@ -4,5 +4,5 @@
 # senza-sdk is published to PyPI as "senza-sdk".  If building from a local
 # wheel instead, replace the line below with the wheel path or remove it
 # and set SENZA_WHEEL env var before running setup_python.ps1.
-senza-sdk>=1.2.3
+senza-sdk>=1.3.0
 aiohttp

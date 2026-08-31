@@ -61,15 +61,20 @@ async def stream_prompt(
     text: str,
     timeout_ms: int = 5000,
     max_consecutive_timeouts: int = 1,
+    attachments: Optional[list] = None,
 ) -> AsyncGenerator[dict, None]:
     """Send a prompt and yield events as they arrive (Agent / AgentHarness).
 
     Version-compatible re-implementation of ``senza.stream_prompt`` that
-    always accepts ``max_consecutive_timeouts`` (see module docstring).
+    always accepts ``max_consecutive_timeouts`` (see module docstring) and
+    forwards ``attachments`` (senza-sdk >= 1.3.0 ``prompt(text, attachments=)``).
+    On older SDKs a non-empty ``attachments`` raises TypeError from
+    ``obj.prompt`` — surfaced through the stream as the first event's sibling
+    error, matching upstream behaviour.
 
-    Starts ``obj.prompt(text)`` on a background thread, then yields events
-    until a terminal event (``agent_end``, ``settled``, ``aborted``,
-    ``error``) is received or the stream is exhausted.
+    Starts ``obj.prompt(text, attachments)`` on a background thread, then
+    yields events until a terminal event (``agent_end``, ``settled``,
+    ``aborted``, ``error``) is received or the stream is exhausted.
     """
     it = _get_event_iterator(obj, timeout_ms, max_consecutive_timeouts)
 
@@ -78,7 +83,7 @@ async def stream_prompt(
 
     def _do_prompt() -> None:
         try:
-            obj.prompt(text)
+            obj.prompt(text, attachments)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
         finally:

@@ -69,8 +69,15 @@ class TaskManager:
 
     # ── Task execution ───────────────────────────────────────────────────
 
-    async def start_task(self, text: str, timeout_ms: int = 300000) -> dict[str, Any]:
-        """Start a new task. Returns ``{"ok": True}`` or ``{"error": ...}``."""
+    async def start_task(
+        self, text: str, timeout_ms: int = 300000, attachments: Optional[list] = None
+    ) -> dict[str, Any]:
+        """Start a new task. Returns ``{"ok": True}`` or ``{"error": ...}``.
+
+        ``attachments`` is an optional list of Senza ``Attachment`` objects
+        (e.g. from ``senza.image_base64``) passed through to the harness
+        prompt — senza-sdk >= 1.3.0.
+        """
         if self._harness is None:
             return {"ok": False, "error": "Agent harness not available"}
         if self._running:
@@ -84,21 +91,20 @@ class TaskManager:
         self._cancel_flag = False
 
         # Launch the streaming task in the background.
-        asyncio.ensure_future(self._run_task(text, timeout_ms))
+        asyncio.ensure_future(self._run_task(text, timeout_ms, attachments))
         return {"ok": True, "task": text[:200]}
 
     async def abort_task(self) -> dict[str, Any]:
         """Abort the running task."""
         if not self._running:
             return {"ok": False, "error": "No task running"}
-        self._cancel_flag = True
         try:
             self._harness.abort()
         except Exception:
             pass
         return {"ok": True}
 
-    async def _run_task(self, text: str, timeout_ms: int) -> None:
+    async def _run_task(self, text: str, timeout_ms: int, attachments: Optional[list] = None) -> None:
         await self._broadcast({
             "type": "task_start",
             "text": text[:500],
@@ -116,6 +122,7 @@ class TaskManager:
                 self._harness, text,
                 timeout_ms=30000,
                 max_consecutive_timeouts=999999,
+                attachments=attachments,
             ):
                 if self._cancel_flag:
                     break

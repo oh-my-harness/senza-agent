@@ -668,3 +668,50 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 - [ ] PR #146 等 review/merge。
 - [ ] senza-agent 侧改造（等 #146 落地或用裸 Attachment 方案提前做）：`tool_load_image` 返回 Attachment/mixed list；`_sdk_compat.stream_prompt` attachments 透传；host 侧 VisionDegraded 事件呈现。
 - [ ] "glm-5.3flash textonly" 出处仍未定位（用户侧再问时需拿精确提示原文）。
+
+## 2026-08-31 | Qevos 式识图落地：senza-sdk 1.3.0 升级 + 附件全链路（工具→prompt→HTTP→面板）
+
+### 本次做了什么
+
+决策：**不改 Senza 仓库**（PR #37 仍 OPEN，不在 v1.3.0），用已发布的 senza-sdk 1.3.0 附件 API（`prompt/steer(text, attachments=)`、`image_base64/image_url`）在 senza-agent 侧实现 Qevos 的图像识别功能。
+
+1. **依赖升级**：venv senza-sdk 1.2.1 → 1.3.0（PyPI wheel 实测 `image_base64/image_url/Attachment` 可导入可用）；`requirements.txt` 升为 `senza-sdk>=1.3.0`；`runtime.lock` 由 `05f09d6`（runtime 仓库 SHA，dev_setup 静默 checkout 失败的旧坑）改钉 Senza v1.3.0 tag commit `320744cf…`，dev_setup 从 Senza 源构建 wheel 时不再落空。
+
+2. **工具层**（`tools/standard.py`）：
+   - `tool_load_image`：本地/远程图片经原下载+`_normalise_image` 规范化路径后，改为返回 mixed list `[caption?, Attachment(image_base64)]`（1.3.0 `parse_tool_result` 原生支持），LLM 真正拿到像素；错误仍返回 `{"status":"error"}` dict。`_state.vision_supported is False` 守卫保留。
+   - `tool_load_video`：抽帧后每帧一个 JPEG Attachment + 引导文字（时长/范围/帧率），代替原来"抽完帧扔掉只报数字"的行为。
+   - 实测：1x1 PNG 本地路径 → `["a dot", Attachment(image_base64, image/png)]`；空路径/缺文件/网络不可达 → error dict。
+
+3. **SDK 兼容层**（`_sdk_compat.py`）：vendored `stream_prompt` 增加 `attachments` 参数，`obj.prompt(text, attachments)` 透传（旧 SDK 传 None 也不炸，新 SDK 才传真附件）。
+
+4. **TaskManager**（`webserver/task.py`）：`start_task(text, timeout_ms, attachments=)` → `_run_task` → `stream_prompt(..., attachments=)` 全链透传。
+
+5. **`/api/inject-image`**（`qevos_bridge.py`，原为写死"not supported"的桩）：
+   - 新增模块级 `_attachment_from_payload`：data URL（含 mime 解析）/裸 base64/`url` 透传/本地 `path`（读盘 embed）四路解析，坏输入抛 ValueError→400。
+   - 路由复刻 `_api_inject`：ask_user 等待中→拒绝；运行中→`harness.steer(text, attachments=[att])`（TypeError→提示升级 1.3.0）；空闲→`start_task(prompt, attachments=[att])`。
+   - VisionDegraded 事件：runtime #146 的该事件不在 v1.3.0 的 17 类映射里，1.3.0 下不会出现（`_ => unknown` 兜底），无需处理；vision 拒绝→`_state.vision_supported=False` 的降级链路属 runtime 侧，留待 #146 进入 Senza 发布线。
+
+6. **面板**（`static/panel.html`，7984→8131 行）：
+   - cmd 输入框内新增 📎 按钮（CSS 仿 rigor-bulb）、上方浮动附件预览条（缩略图+×删除）。
+   - `cmdInput` paste 监听：剪贴板图片（截图）直接进附件，8MB 上限。
+   - `sendCmd`：有附件时逐张 POST `/api/inject-image`（首张带 text），走 postJsonWithRetry；无附件路径完全不变。ask_user 等待场景由服务端统一拒绝。
+
+### 验证结果
+
+- 新增 `tests/test_image_attach.py` 27 个用例：payload 解析 10、工具 7、stream_prompt 2、TaskManager 2、endpoint 6（aiohttp TestClient 实测 idle-start/running-steer/400/awaiting-reject/旧SDK-TypeError）——27/27 通过。
+- 全量回归：`pytest tests/` → **353 passed, 3 skipped**（基线 326+3，新增 27 全过，无回归）。
+- panel.html 4 个 `<script>` 块全部过 `node --check`；新增元素/函数/端点引用均唯一。
+- venv 内端到端：`registry.get_standard_tools()` 的 `load_image` 是 `Tool` 对象，`tool_load_image` 直接调用返回 `[str, Attachment]`；1.3.0 `Attachment(image_base64, image/png)` 实例化 OK。
+- 已知非问题：跑 Senza 仓库 PR 分支的 `test_tool_attachment_return.py` 失败（`Tool.drive` 属性不存在）——那是 PR #37 测试对接 PR 分支自身运行时的用例，对着发布版 1.3.0 wheel 跑必然缺 `drive()`，与本次改动无关。
+
+### 踩坑与结论
+
+- **edit 工具行号漂移三次**：大 HTML 中 `INS.POST` 锚点算错会把块插进无关函数（两次插坏 sendCmd、一次把附件条插进 tab-pane 又劈开 rigor-bulb 按钮）。教训：编辑后必须立刻 `read` 回看实际范围，靠"响应里显示的行"而非记忆行号；本次全部当场修复并 `node --check` 验证。
+- **mock harness 事件队列写法**：`h.events = MagicMock()` 时 `_get_event_iterator` 拿到的 `next(it)` 返回 MagicMock（非 dict），`stream_prompt` 永远等不到终止事件→测试挂 90s 超时。正确写法 `h.events = MagicMock(return_value=iter([...]))`。
+- 1.3.0 的 `parse_tool_result` 对 bare Attachment、str、list/tuple 混合、dict（仅 text 块）都接受——mixed list 是官方路径，无需 PR #37。
+- `ToolContext` 无法从 Python 构造（builtins 需要 abort token），PyTool 层端到端靠 1.3.0 解析路径约定 + 全量测试间接覆盖。
+
+### 遗留项 / 下一步
+- [ ] Senza PR #37 merge 后：tool dict 返回路径（gap 1）可再收敛；steer 的 attachments 在 1.3.0 SDK 已支持，但运行时 steer-with-image 的 UX 文案可细化。
+- [ ] runtime #146 进 Senza（下个 tag）后：host 侧处理 `VisionDegraded` 事件（目前 1.3.0 event_stream 映射到 unknown），vision 拒绝自动剥历史重试的 dashboard 呈现。
+- [ ] desktop 打包层（win-unpacked 里的旧 panel.html）需随下个安装包构建更新，本次只改了源 `senza_agent/webserver/static/panel.html`。

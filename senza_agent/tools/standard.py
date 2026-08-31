@@ -1157,12 +1157,15 @@ def _fetch_remote_image(url: str, timeout: float = 20.0) -> Tuple[Optional[bytes
     return None, "URL did not return recognised image bytes", True
 
 
-def tool_load_image(path: str = "", caption: str = "") -> dict:
-    """Load a local image or remote URL into the conversation context (multimodal)."""
+def tool_load_image(path: str = "", caption: str = "") -> Any:
+    """Load a local image or remote URL into the conversation context (multimodal).
+
+    Returns a mixed list — optional caption text plus a Senza ``Attachment`` —
+    which the runtime converts into a tool message image block the LLM can
+    actually see (senza-sdk >= 1.3.0).  Errors still return a plain dict.
+    """
     if _state.vision_supported is False:
         return _err("current LLM backend does not support multimodal (vision)")
-
-    import urllib.parse
 
     p = (path or "").strip()
     if not p:
@@ -1183,22 +1186,29 @@ def tool_load_image(path: str = "", caption: str = "") -> dict:
         except Exception as e:
             _state.bad_image_urls[p] = f"decode failed: {e}"
             return _err(f"image downloaded but cannot decode ({len(raw)} bytes): {e}")
+    else:
+        fp = Path(p)
+        if not fp.is_absolute():
+            fp = Path(os.getcwd()) / fp
+        if not fp.exists():
+            return _err(f"file does not exist: {fp}")
 
-        return _ok({"loaded": p, "mime": mime, "size_kb": len(data) // 1024, "caption": caption})
+        try:
+            raw = fp.read_bytes()
+            data, mime = _normalise_image(raw)
+        except Exception as e:
+            return _err(f"failed to read image: {e}")
+        p = str(fp)
 
-    fp = Path(p)
-    if not fp.is_absolute():
-        fp = Path(os.getcwd()) / fp
-    if not fp.exists():
-        return _err(f"file does not exist: {fp}")
+    import senza
 
-    try:
-        raw = fp.read_bytes()
-        data, mime = _normalise_image(raw)
-    except Exception as e:
-        return _err(f"failed to read image: {e}")
+    att = senza.image_base64(base64.b64decode(data), mime)
+    blocks: list = []
+    if caption:
+        blocks.append(caption)
+    blocks.append(att)
+    return blocks
 
-    return _ok({"loaded": fp.name, "mime": mime, "size_kb": len(data) // 1024, "caption": caption})
 
 
 def tool_load_video(
@@ -1208,8 +1218,12 @@ def tool_load_video(
     start_time: float = 0.0,
     end_time: float = -1.0,
     caption: str = "",
-) -> dict:
-    """Extract keyframes from a local video file for multimodal analysis."""
+) -> Any:
+    """Extract keyframes from a local video file for multimodal analysis.
+
+    Returns a mixed list — caption/summary text plus one image ``Attachment``
+    per extracted frame (senza-sdk >= 1.3.0).  Errors still return a dict.
+    """
     if _state.vision_supported is False:
         return _err("current LLM backend does not support multimodal (vision)")
 
@@ -1244,7 +1258,7 @@ def tool_load_video(
             step = len(candidates) / max_frames
             candidates = [candidates[int(i * step)] for i in range(max_frames)]
 
-        extracted = 0
+        frames_b64: list[str] = []
         for frame_idx in candidates:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ok, frame = cap.read()
@@ -1253,19 +1267,26 @@ def tool_load_video(
             ok2, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if not ok2:
                 continue
-            extracted += 1
+            frames_b64.append(base64.b64encode(buf.tobytes()).decode())
     finally:
         cap.release()
 
-    if extracted == 0:
+    if not frames_b64:
         return _err("could not extract any frames from the video")
 
+    import senza
+
     range_desc = f"{start_time:.1f}s-{duration:.1f}s" if end_time < 0 else f"{start_time:.1f}s-{end_time:.1f}s"
-    summary = (
-        f"extracted {extracted} frames from {fp.name} "
-        f"(duration {duration:.1f}s, range {range_desc}, fps={fps:.1f}, interval {interval}s)"
+    blocks: list = []
+    lead = caption or (
+        f"{len(frames_b64)} frames from {fp.name} "
+        f"(duration {duration:.1f}s, range {range_desc}, fps={fps:.1f}, interval {interval}s), "
+        f"in chronological order"
     )
-    return _ok({"summary": summary, "frames": extracted, "caption": caption})
+    blocks.append(lead)
+    for b64 in frames_b64:
+        blocks.append(senza.image_base64(base64.b64decode(b64), "image/jpeg"))
+    return blocks
 
 
 # ── Ask user ────────────────────────────────────────────────────────────────

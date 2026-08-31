@@ -809,6 +809,36 @@ mark.sh { background: rgba(210,153,34,0.35); color: inherit; border-radius: 2px;
 }
 .rigor-bulb:hover { background:var(--bg2); filter:grayscale(0.5) opacity(0.7); }
 .rigor-bulb.on { filter:none; text-shadow:0 0 7px rgba(255,200,40,0.95), 0 0 14px rgba(255,180,0,0.55); }
+
+/* Image attach (Qevos multimodal) — 📎 button inside the input, strip above */
+.img-attach-btn {
+  position:absolute; left:5px; top:50%; transform:translateY(-50%);
+  background:transparent; border:none; cursor:pointer; padding:2px 4px;
+  font-size:14px; line-height:1; border-radius:6px;
+  filter:grayscale(1) opacity(0.5); transition:filter 0.15s, background 0.15s;
+  z-index:2;
+}
+.img-attach-btn:hover { filter:none; background:rgba(88,166,255,0.12); }
+.cmd-input-wrap .cmd-input.has-attach { padding-left:32px; }
+.img-attach-strip {
+  display:none; position:absolute; bottom:100%; left:16px; right:16px;
+  padding:8px 10px; margin-bottom:6px;
+  background:var(--bg2); border:1px solid var(--border); border-radius:10px;
+  box-shadow:0 -4px 18px rgba(0,0,0,0.35);
+  align-items:center; gap:8px; flex-wrap:wrap;
+}
+.img-attach-strip.visible { display:flex; }
+.img-attach-thumb {
+  position:relative; width:56px; height:56px; border-radius:8px; overflow:hidden;
+  border:1px solid var(--border); flex-shrink:0;
+}
+.img-attach-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.img-attach-thumb .rm {
+  position:absolute; top:2px; right:2px; width:16px; height:16px; line-height:14px;
+  text-align:center; font-size:11px; border-radius:50%;
+  background:rgba(0,0,0,0.65); color:#fff; cursor:pointer; user-select:none;
+}
+.img-attach-hint { font-size:11px; color:var(--muted); }
 .cmd-send {
   background:linear-gradient(135deg,#1f6feb,#3b82f6); border:1px solid transparent; color:#fff;
   box-sizing:border-box; width:72px; padding:8px 0; text-align:center;
@@ -2175,6 +2205,9 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
     </div>
     <span class="cmd-prompt" id="cmdPrompt">›</span>
     <div class="cmd-input-wrap">
+      <button class="img-attach-btn" id="imgAttachBtn" type="button"
+              title="附加图片（或直接粘贴截图）" aria-label="附加图片"
+              onclick="pickImageAttachment()">📎</button>
       <input class="cmd-input" id="cmdInput"
              placeholder="/inject message  |  /status  |  /stop  |  /exit  |  /compress  |  /+20"
              onkeydown="onCmdKey(event)">
@@ -2184,6 +2217,9 @@ body.large-font .app.pane-zen { grid-template-columns: 0 1fr 0; }
     </div>
     <button class="cmd-send" id="cmdSendBtn" onclick="sendCmd()">Send</button>
     <button class="nostop-btn" id="nostopBtn" onclick="toggleNostop()">nostop</button>
+    <div class="img-attach-strip" id="imgAttachStrip">
+      <span class="img-attach-hint" id="imgAttachHint"></span>
+    </div>
   </div>
 </div>
 
@@ -4311,6 +4347,24 @@ async function sendCmd() {
     cmd = raw.startsWith('/') ? raw : `/inject ${raw}`;
   }
   try {
+    // Images attached → route via /api/inject-image (server builds Senza
+    // attachments); one request per image, then the text as a plain inject.
+    if (gAttachImages.length) {
+      const text = raw.startsWith('/') ? raw : raw;
+      let sent = 0;
+      for (const img of gAttachImages) {
+        try {
+          const res = await postJsonWithRetry('/api/inject-image', {
+            image: img.dataUrl, text: sent === 0 ? raw : '', runId,
+          });
+          const body = await res.json().catch(() => ({}));
+          if (res.ok && body.ok) { sent++; } else { toast(`✗ 图片注入失败: ${body.error || res.status}`); }
+        } catch { toast('✗ 图片注入网络错误'); }
+      }
+      clearAttachImages();
+      if (sent) { input.value = ''; toast(`✓ 已发送 ${sent} 张图片`); return; }
+      return;
+    }
     const res = await postJsonWithRetry('/api/inject', { command: cmd, runId });
     const resBody = await res.json().catch(() => ({}));
     console.log('[sendCmd] response status=%o body=%o', res.status, resBody);
@@ -4318,6 +4372,94 @@ async function sendCmd() {
     else toast('✗ Server rejected: ' + (resBody.error || ''));
   } catch (e) { console.error('[sendCmd] error', e); toast('✗ Network error (retried)'); }
 }
+
+// ── Image attachment (Qevos multimodal) ──────────────────────────────────
+let gAttachImages = [];   // [{ dataUrl, name }]
+
+function pickImageAttachment() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    input.remove();
+    files.forEach(addAttachImageFile);
+  });
+  input.click();
+}
+
+function addAttachImageFile(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) { toast('⚠ 仅支持图片文件'); return; }
+  if (file.size > 8 * 1024 * 1024) { toast('⚠ 图片超过 8MB，已拒绝'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    gAttachImages.push({ dataUrl: reader.result, name: file.name || 'pasted-image' });
+    renderAttachStrip();
+    const input = document.getElementById('cmdInput');
+    if (input) { input.classList.add('has-attach'); input.focus(); }
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeAttachImage(idx) {
+  gAttachImages.splice(idx, 1);
+  renderAttachStrip();
+}
+
+function clearAttachImages() {
+  gAttachImages = [];
+  renderAttachStrip();
+}
+
+function renderAttachStrip() {
+  const strip = document.getElementById('imgAttachStrip');
+  const input = document.getElementById('cmdInput');
+  if (!strip || !input) return;
+  strip.querySelectorAll('.img-attach-thumb').forEach(el => el.remove());
+  const hint = document.getElementById('imgAttachHint');
+  if (!gAttachImages.length) {
+    strip.classList.remove('visible');
+    input.classList.remove('has-attach');
+    if (hint) hint.textContent = '';
+    return;
+  }
+  strip.classList.add('visible');
+  input.classList.add('has-attach');
+  if (hint) hint.textContent = `${gAttachImages.length} 张图片待发送`;
+  gAttachImages.forEach((img, idx) => {
+    const t = document.createElement('div');
+    t.className = 'img-attach-thumb';
+    t.title = img.name;
+    const im = document.createElement('img');
+    im.src = img.dataUrl;
+    const rm = document.createElement('span');
+    rm.className = 'rm';
+    rm.textContent = '×';
+    rm.onclick = () => removeAttachImage(idx);
+    t.appendChild(im); t.appendChild(rm);
+    strip.appendChild(t);
+  });
+}
+
+// Paste screenshots / copied image files directly into the command bar.
+(function() {
+  const input = document.getElementById('cmdInput');
+  if (!input) return;
+  input.addEventListener('paste', (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    let hit = false;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) { addAttachImageFile(f); hit = true; }
+      }
+    }
+    if (hit) e.preventDefault();
+  });
+})();
 
 // ── UI helpers ────────────────────────────────────────────────────────────
 function toggleAutoScroll() {

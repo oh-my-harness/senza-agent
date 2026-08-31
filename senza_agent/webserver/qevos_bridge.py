@@ -27,6 +27,65 @@ from aiohttp import web, WSMsgType
 _MODIFIED = object()
 
 
+
+def _attachment_from_payload(body: dict) -> Any:
+    """Build a Senza ``Attachment`` from an inject-image JSON body.
+
+    Accepts (first match wins):
+      - ``image``: data URL (``data:image/png;base64,...``) or raw base64
+      - ``url``: remote image URL (pass-through; runtime downloads)
+      - ``path``: local file path (read now, embed as base64)
+
+    Raises ValueError with a user-facing message when nothing usable is found.
+    """
+    import base64 as _b64
+
+    import senza
+
+    img = (body.get("image") or "").strip()
+    if img:
+        mime = "image/png"
+        if img.startswith("data:"):
+            # data:[<mime>][;base64],<data>
+            head, _, payload = img.partition(",")
+            meta = head[5:]
+            if meta:
+                mime = meta.split(";", 1)[0] or mime
+            if ";base64" not in head:
+                raise ValueError("only base64 data URLs are supported")
+        else:
+            payload = img
+        try:
+            data = _b64.b64decode(payload, validate=True)
+        except Exception:
+            raise ValueError("image payload is not valid base64")
+        if not data:
+            raise ValueError("image payload is empty")
+        return senza.image_base64(data, mime)
+
+    url = (body.get("url") or "").strip()
+    if url:
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        return senza.image_url(url)
+
+    path = (body.get("path") or "").strip()
+    if path:
+        fp = Path(path)
+        if not fp.is_absolute():
+            fp = Path(os.getcwd()) / fp
+        if not fp.is_file():
+            raise ValueError(f"file does not exist: {fp}")
+        try:
+            data = fp.read_bytes()
+        except OSError as e:
+            raise ValueError(f"cannot read file: {e}")
+        import mimetypes
+        mime = mimetypes.guess_type(str(fp))[0] or "application/octet-stream"
+        return senza.image_base64(data, mime)
+
+    raise ValueError("provide one of: image (data URL/base64), url, or path")
+
 # ── Paths ──────────────────────────────────────────────────────────────────
 
 _AGENT_DIR = Path(os.environ.get("SENZA_AGENT_DIR", Path.cwd()))
@@ -740,7 +799,62 @@ class QevosAPI:
         return web.json_response(result)
 
     async def _api_inject_image(self, request: web.Request) -> web.Response:
-        return web.json_response({"ok": False, "error": "image injection not supported"})
+        """Attach an image to the agent conversation (senza-sdk >= 1.3.0).
+
+        Body JSON, one of:
+          - ``{"image": "<data URL or raw base64>", "text": "..."}``
+          - ``{"url": "https://...", "text": "..."}``
+          - ``{"path": "/local/file.png", "text": "..."}``
+
+        Routing mirrors ``_api_inject``: running task → ``harness.steer``,
+        ask_user pending → rejected, idle → new task via ``start_task``.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        text = (body.get("text") or body.get("caption") or "").strip()
+        try:
+            att = _attachment_from_payload(body)
+        except ValueError as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+        # Route exactly like a text inject: ask_user pending → reject.
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        bridge = get_bridge()
+        awaiting = self.sb.state.get("meta", {}).get("awaiting_input")
+        if bridge.is_active or awaiting:
+            return web.json_response({
+                "ok": False,
+                "error": "Agent is waiting for an ask_user answer; image injection rejected.",
+            })
+
+        if self.task.is_running:
+            # Steer the running agent with the image; steer(attachments=)
+            # requires senza-sdk >= 1.3.0.
+            import senza
+            try:
+                if text:
+                    self.task._harness.steer(text, attachments=[att])
+                else:
+                    self.task._harness.steer("See the attached image.", attachments=[att])
+            except TypeError:
+                return web.json_response({
+                    "ok": False,
+                    "error": "installed senza-sdk does not support image steering; upgrade to >= 1.3.0",
+                })
+            except Exception as e:
+                return web.json_response({"ok": False, "error": f"steer failed: {e}"})
+            return web.json_response({"ok": True, "mode": "steer"})
+
+        # Idle: start a new task carrying the attachment.
+        if self.task._harness is None:
+            return web.json_response({"ok": False, "error": "Agent harness not available"})
+        prompt = text or "Analyze the attached image."
+        await self.sb.on_task_start(prompt)
+        result = await self.task.start_task(prompt, attachments=[att])
+        return web.json_response(result)
 
     async def _api_version(self, request: web.Request) -> web.Response:
         try:
