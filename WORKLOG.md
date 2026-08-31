@@ -633,3 +633,38 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 - [ ] 等 issue #145 的 dict content-block 支持落地后，改造 senza-agent `tool_load_image` 返回 dict content-block（或先用裸 Attachment 方案提前落地）
 - [ ] `_sdk_compat.stream_prompt` 加 attachments 透传
 - [ ] vision-unsupported 自愈逻辑（等 SDK 结构化错误事件）
+
+## 2026-08-31 | issue #145 缺口 2/3 修复完成：runtime PR #146（含改动必要性审计）
+
+### 本次做了什么
+
+1. **改动必要性审计**（用户要求"看看改动是不是都是必要的"），对 `/tmp/runtime-pr` 工作树逐项裁剪：
+   - **删除**：流中（mid-stream）错误降级分支（原 loop_fn.rs ~555-583）。vision 拒绝是 HTTP 400，发生在响应头阶段（`chat_stream` 返回 handle 之前），流中错误只可能是 StreamIncomplete/Decode/网络断——该分支永远不会命中真实 vision 拒绝，只会在瞬态流错误时误剥历史。
+   - **收紧**：连接建立路径的降级触发条件，从"任何错误+历史有图"改为仅 `LlmError::InvalidRequest`（adapter openai/mod.rs:175，400→InvalidRequest）。否则 500/401 等瞬态或认证错误也会触发剥图重试，把故障误伤成历史篡改。
+   - **删除**：`vision_removal_notice()` dead-code 访问器（`pub(crate)` 模块内 `pub fn` 宿主不可达）。
+   - **保留**：核心 strip 逻辑、VisionDegraded 事件、一次性 guard、4 个集成测试（均为 gap 2/3 必需）。
+   - **保留并独立成 commit**：parking_lot 迁移（13 文件，仓库既有约定，rs-parking-lot 规则强制）。
+   - 澄清一处历史疑点：async_delivery_integration.rs 的 `buf.push_str(t)` 编译错误是当时 Mutex 类型损坏引发的级联误判——基线（stash 后）clippy 实测干净，`as_str()` 改动属不必要 churn，已在后续测试中自然验证。
+
+2. **验证**：
+   - `llm-harness-loop` lib 测试 151 passed（含 vision 5 单测 + loop_fn 4 集成测试）。
+   - `cargo clippy --workspace --all-targets` 0 错误 0 警告；`cargo fmt --all` 干净。
+   - 全 workspace 测试（`--exclude llm-harness-live-tests`）：17 suite ok；仅 `llm-harness-sandbox::cancellation_storm_stays_bounded` 失败——git stash 基线复现同样失败（全局 ChildReaper + 真实子进程，断言 in_flight<=33，共享机高负载 flaky），与本次改动无关 crate；`--test-threads=2` 时全绿。
+
+3. **提交与 PR**：
+   - 分支 `fix/vision-degradation-145` 两个 commit：`1b02d6a` fix(loop)（vision.rs + loop_fn.rs + events.rs，506+）与 `1fc78c8` chore（parking_lot 迁移 13 文件）。
+   - **PR #146 已开**：https://github.com/oh-my-harness/llm-harness-runtime/pull/146（Closes #145，缺口 2/3；缺口 1 已由 Senza PR #37 覆盖）。
+   - issue #145 已评论 PR 链接：issuecomment-5473700097。
+
+### 踩坑与结论
+
+- **根分区磁盘满**（70G 100%）：`/tmp/runtime-pr/target` 5G 是主因，且 stash 往返时 cargo fingerprint 把空间吃穿导致 `git stash pop` 反复失败。解决：target 迁到 `/data/xuhongming/tmp/runtime-target/target`（15T NFS，75% 使用率），原路径留符号链接——对 cargo 透明。期间清掉 `target/debug/incremental`（2.4G）先解燃眉之急。
+- 链接期 `-lsqlite3` 找不到：系统只有 `libsqlite3.so.0`（无 dev 软链），用 `RUSTFLAGS="-L native=/data/xuhongming/.conda/envs/guiarcgen/lib"` 指到 conda 的 libsqlite3.so 解决。
+- GitHub 连接间歇性超时（443 连不上），等待 ~2 分钟后自行恢复，重试即可。
+- `git stash` 在磁盘满时非常危险：pop 失败后 working tree 可能只剩 untracked 文件。本次靠 `git stash show -p | git apply` 管道恢复全部 16 个文件改动——比重新手写靠谱得多。
+- sandbox flaky 定位流程：单测通过→整套重跑通过→基线（stash）复现失败→确认与本改动无关，三层证据链。
+
+### 遗留项 / 下一步
+- [ ] PR #146 等 review/merge。
+- [ ] senza-agent 侧改造（等 #146 落地或用裸 Attachment 方案提前做）：`tool_load_image` 返回 Attachment/mixed list；`_sdk_compat.stream_prompt` attachments 透传；host 侧 VisionDegraded 事件呈现。
+- [ ] "glm-5.3flash textonly" 出处仍未定位（用户侧再问时需拿精确提示原文）。
