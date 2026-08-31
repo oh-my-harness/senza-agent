@@ -938,3 +938,13 @@ senza_agent/__init__.py），提交后打 tag v0.1.7 触发 build-windows.yml �
 （draft release，需手动 publish）。本版内容：`db655d5` AgentState/_StateRef 字段失配
 修复（load_image/load_video/register_tool 等自初始提交起运行时必崩）+ `73ee40c` 更新
 进度窗口中文乱码/百分比 + `88ef4f8` 首次启动 (N/6) 步骤进度。
+
+### v0.1.7 发布记录（同日补充）
+
+- tag v0.1.7 push 后 CI run 33367047150 success（~2 分钟出包）。
+- electron-builder 又产生两个重复 draft：#379565965（仅 blockmap）、#379565967
+  （latest.yml + exe）。处置：下载 blockmap 重新上传到 #379565967，删 #379565965。
+- 新坑：CI 建的 draft tag 是 `untagged-…` 占位（打 tag 前已创建），PATCH
+  `tag_name: v0.1.7` 修正后才 publish。
+- 已发布：releases/latest = v0.1.7（latest.yml + exe 82MB + blockmap 齐全，
+  feed sha512 EEO/f9A+…），桌面端自动更新即可拉到。
