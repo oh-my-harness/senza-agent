@@ -1,14 +1,12 @@
 """Tests for Qevos-style image recognition plumbing (senza-sdk >= 1.3.0).
 
-Covers:
-  - tool_load_image / tool_load_video returning mixed [caption, Attachment] lists
-  - _sdk_compat.stream_prompt forwarding attachments to obj.prompt
-  - TaskManager.start_task/_run_task attachment passthrough
+  - TaskManager._run_task native prompt path (attachments + error surfacing)
   - _api_inject_image endpoint (idle → start_task, running → steer, bad payload → 400)
   - _attachment_from_payload parsing (data URL, raw base64, url, path, rejects)
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 from unittest.mock import AsyncMock, MagicMock
 
@@ -128,38 +126,6 @@ class TestToolLoadVideo:
         assert out["status"] == "error"
 
 
-# ══ _sdk_compat.stream_prompt attachments ══════════════════════════════════
-
-
-class TestStreamPromptAttachments:
-    @pytest.fixture
-    def fake_harness(self):
-        """Harness whose events() yields one agent_end event, sync iterator."""
-        h = MagicMock()
-        h.events = MagicMock(return_value=iter([{"type": "agent_end"}]))
-        h.prompt = MagicMock(return_value=None)
-        return h
-
-    async def test_forwards_attachments_positionally(self, fake_harness):
-        from senza_agent._sdk_compat import stream_prompt
-        att = _attachment_from_payload({"image": _PNG_B64})
-        events = []
-        async for ev in stream_prompt(fake_harness, "hi", attachments=[att]):
-            events.append(ev)
-        assert events[-1]["type"] == "agent_end"
-        args, kwargs = fake_harness.prompt.call_args
-        assert args[0] == "hi"
-        assert args[1] == [att]
-
-    async def test_none_attachments_still_passed(self, fake_harness):
-        from senza_agent._sdk_compat import stream_prompt
-        events = []
-        async for ev in stream_prompt(fake_harness, "hi"):
-            events.append(ev)
-        args, _ = fake_harness.prompt.call_args
-        assert args[1] is None
-
-
 # ══ TaskManager plumbing ═══════════════════════════════════════════════════
 
 
@@ -183,27 +149,35 @@ class TestTaskManagerAttachments:
         await asyncio.sleep(0)
         assert captured["attachments"] == [att]
 
-    async def test_run_task_passes_attachments_to_stream_prompt(self, monkeypatch):
+    async def test_run_task_passes_attachments_to_prompt(self):
         from senza_agent.webserver.task import TaskManager
-        import senza_agent.webserver.task as task_mod
         tm = TaskManager()
-        tm.set_harness(MagicMock())
-        got = {}
-
-        def fake_stream(harness, text, timeout_ms=0, max_consecutive_timeouts=0, attachments=None):
-            got["attachments"] = attachments
-
-            async def _gen():
-                yield {"type": "agent_end"}
-            return _gen()
-
-        monkeypatch.setattr(
-            task_mod, "stream_prompt", fake_stream, raising=False)
-        import senza_agent._sdk_compat as compat
-        monkeypatch.setattr(compat, "stream_prompt", fake_stream)
+        h = MagicMock()
+        h.events = MagicMock(return_value=iter([{"type": "agent_end"}]))
+        h.prompt = MagicMock(return_value=None)
+        tm.set_harness(h)
         att = _attachment_from_payload({"image": _PNG_B64})
         await tm._run_task("look", 1000, [att])
-        assert got["attachments"] == [att]
+        args, _ = h.prompt.call_args
+        assert args[0] == "look"
+        assert args[1] == [att]
+
+    async def test_run_task_surfaces_prompt_error(self):
+        from senza_agent.webserver.task import TaskManager
+        tm = TaskManager()
+        h = MagicMock()
+        h.events = MagicMock(return_value=iter([{"type": "agent_end"}]))
+        h.prompt = MagicMock(side_effect=RuntimeError("boom"))
+        tm.set_harness(h)
+        seen = []
+        tm._on_event = seen.append
+        await tm._run_task("look", 1000, None)
+        assert any(
+            e["type"] == "error" and "boom" in e.get("message", "") for e in seen
+        )
+
+
+
 
 
 # ══ /api/inject-image endpoint ═════════════════════════════════════════════
@@ -311,15 +285,3 @@ class TestInjectImageEndpoint:
         finally:
             await client.close()
 
-    async def test_running_with_old_sdk_typeerror(self, api, aiohttp_client_factory):
-        api, sb, tm = api
-        tm._running = True
-        tm._harness.steer = MagicMock(side_effect=TypeError("unexpected keyword"))
-        client = await aiohttp_client_factory(api)
-        try:
-            r = await client.post("/api/inject-image", json={"image": _PNG_B64})
-            body = await r.json()
-            assert body["ok"] is False
-            assert "1.3.0" in body["error"]
-        finally:
-            await client.close()

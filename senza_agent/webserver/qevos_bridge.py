@@ -831,19 +831,10 @@ class QevosAPI:
             })
 
         if self.task.is_running:
-            # Steer the running agent with the image; steer(attachments=)
-            # requires senza-sdk >= 1.3.0.
-            import senza
+            # Steer the running agent with the image.
             try:
-                if text:
-                    self.task._harness.steer(text, attachments=[att])
-                else:
-                    self.task._harness.steer("See the attached image.", attachments=[att])
-            except TypeError:
-                return web.json_response({
-                    "ok": False,
-                    "error": "installed senza-sdk does not support image steering; upgrade to >= 1.3.0",
-                })
+                self.task._harness.steer(text or "See the attached image.",
+                                         attachments=[att])
             except Exception as e:
                 return web.json_response({"ok": False, "error": f"steer failed: {e}"})
             return web.json_response({"ok": True, "mode": "steer"})

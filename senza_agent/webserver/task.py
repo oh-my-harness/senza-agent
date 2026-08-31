@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from typing import Any, Optional
 
@@ -18,8 +19,8 @@ from aiohttp import web, WSMsgType
 class TaskManager:
     """Manages agent task execution and event streaming.
 
-    The harness runs in a background thread (via ``_sdk_compat.stream_prompt``);
-    events are relayed to all connected WebSocket clients.
+    The harness prompt runs on a worker thread; events are relayed to all
+    connected WebSocket clients.
     """
 
     def __init__(self) -> None:
@@ -114,41 +115,53 @@ class TaskManager:
         # directly, so _run_task no longer manages event state.
 
         events: list[dict[str, Any]] = []
-        full_text: list[str] = []
+
+        async def _emit(wire: dict[str, Any]) -> None:
+            events.append(wire)
+            await self._broadcast({"type": "event", "event": wire})
+            if self._on_event:
+                import inspect
+                if inspect.iscoroutinefunction(self._on_event):
+                    await self._on_event(wire)
+                else:
+                    self._on_event(wire)
 
         try:
-            from senza_agent._sdk_compat import stream_prompt
-            async for ev in stream_prompt(
-                self._harness, text,
-                timeout_ms=30000,
-                max_consecutive_timeouts=999999,
-                attachments=attachments,
+            # Native SDK >= 1.3.0: subscribe to the event stream first, then
+            # run the blocking prompt (positional attachments) on a worker
+            # thread.  prompt() raises on LLM failure; stream_events yields
+            # until the terminal event or stream exhaustion.
+            prompt_error: list[BaseException] = []
+
+            def _do_prompt() -> None:
+                try:
+                    self._harness.prompt(text, attachments)
+                except BaseException as exc:  # noqa: BLE001
+                    prompt_error.append(exc)
+
+            import senza
+            prompt_thread = threading.Thread(target=_do_prompt, daemon=True)
+            prompt_thread.start()
+            async for ev in senza.stream_events(
+                self._harness, timeout_ms=30000, max_consecutive_timeouts=999999
             ):
                 if self._cancel_flag:
                     break
                 wire = self._normalize_event(ev)
-                events.append(wire)
-                await self._broadcast({"type": "event", "event": wire})
-                if self._on_event:
-                    import inspect
-                    if inspect.iscoroutinefunction(self._on_event):
-                        await self._on_event(wire)
-                    else:
-                        self._on_event(wire)
+                await _emit(wire)
                 if wire.get("type") in ("settled", "aborted", "error", "agent_end"):
                     break
+            prompt_thread.join(timeout=60)
+            if prompt_error:
+                raise prompt_error[0]
         except Exception as e:
-            await self._broadcast({
-                "type": "event",
-                "event": {"type": "error", "message": str(e)},
-            })
+            await _emit({"type": "error", "message": str(e)})
 
         elapsed = time.time() - self._task_start
         summary = {
             "text": text[:200],
             "elapsed": round(elapsed, 2),
             "event_count": len(events),
-            "answer_preview": "".join(full_text)[:500],
             "timestamp": time.time(),
         }
         self._history.append(summary)

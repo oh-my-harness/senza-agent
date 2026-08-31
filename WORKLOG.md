@@ -715,3 +715,54 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 - [ ] Senza PR #37 merge 后：tool dict 返回路径（gap 1）可再收敛；steer 的 attachments 在 1.3.0 SDK 已支持，但运行时 steer-with-image 的 UX 文案可细化。
 - [ ] runtime #146 进 Senza（下个 tag）后：host 侧处理 `VisionDegraded` 事件（目前 1.3.0 event_stream 映射到 unknown），vision 拒绝自动剥历史重试的 dashboard 呈现。
 - [ ] desktop 打包层（win-unpacked 里的旧 panel.html）需随下个安装包构建更新，本次只改了源 `senza_agent/webserver/static/panel.html`。
+
+## 2026-08-31 | SDK 1.3.0 基线确立：清除 1.2.x 兼容层（_sdk_compat 删除）
+
+### 本次做了什么
+
+用户确认基础版本已提升至 1.3.0，要求找出并清理为旧版兼容而存在的代码。审计结果与处置：
+
+1. **删除 `senza_agent/_sdk_compat.py`（-107 行）**。该 shim 是为 SDK 1.2.1–1.2.3 vendored 的
+   `stream_prompt`（补 `max_consecutive_timeouts` 参数 + `attachments` 透传）。1.3.0 原生
+   `senza.stream_events` 与 vendored 版逐字一致（对比过函数体），原生 `prompt(text, attachments)`
+   位置参数直接可用——shim 的两个存在理由都不再成立。
+
+2. **`webserver/task.py` `_run_task` 改为纯原生组合**：先 `senza.stream_events(harness,
+   timeout_ms=30000, max_consecutive_timeouts=999999)` 订阅事件流，再起 daemon 线程跑
+   `harness.prompt(text, attachments)`；终态 break 后 `join(60s)`，线程内异常（LLM 失败
+   RuntimeError）重抛进 except。同时把 broadcast+on_event 收敛为 `_emit` helper，**修复了一个
+   既有 bug**：原先 error 路径只 `_broadcast`（仅 WS 客户端可见），不走 `_on_event`
+   （= `state_bridge.on_task_event`），LLM 失败时 dashboard 状态桥收不到 error 事件。顺带删除
+   死代码 `full_text`（声明后从未 append，`answer_preview` 恒为空串，前端无消费）。
+
+3. **`qevos_bridge.py` `/api/inject-image` steer 分支**：删除 "TypeError → upgrade to >= 1.3.0"
+   回退和无用的 `import senza`，合并为单次 `steer(text or ..., attachments=[att])`。
+
+4. **`pyproject.toml`**：`senza-sdk>=1.2.3` → `>=1.3.0`（requirements.txt 上一轮已升，此处漏网）。
+   全仓 `1.2.x` 引用清零（仅 WORKLOG 历史记录保留）。
+
+### 验证结果
+
+- `tests/test_image_attach.py` 重写：删 `_sdk_compat.stream_prompt` 2 用例与旧 SDK TypeError
+  1 用例；新增原生路径用例——`prompt` 收到 `(text, [att])` 位置断言、prompt 线程异常→
+  `_on_event` 收到 error 事件断言。25/25 通过。
+- 全量回归：**351 passed, 3 skipped**（基线 353−4 删除 +1 新增 −1 old-SDK = 351，符合预期），
+  连跑两次稳定。仅剩 warning 为 `tools/standard.py` 既有 `datetime.utcnow()` 弃用，与本次无关。
+- `senza_agent/cli.py`、`webserver/app.py` 入口导入 OK；`pyproject.toml` tomllib 解析 OK。
+
+### 踩坑与结论
+
+- **edit 工具 `SWAP` 范围计算又错两次**（一次产生重复 steer 调用行、一次残留旧循环体 +
+  重复 `event_count` 行）——与新写的 `_emit` 相邻的旧行必须显式 DEL，不能指望 SWAP 吞掉。
+  每次编辑后立即回读验证，本次全部当场修复。
+- 测试里 `asyncio_run`（新建 loop 跑协程）在 pytest-asyncio 已运行的 loop 内必然
+  `RuntimeError: Cannot run the event loop while another loop is running`——async 测试直接
+  `await` 即可，不需要自建 loop。
+- 1.3.0 的 `prompt_async(text, timeout_ms, attachments)` 内部走 `prompt_and_collect`（自订阅
+  收集直到 settled），与 webserver 需要的"边流边转发"模型不同，故 task.py 用
+  `stream_events` + 线程 `prompt` 组合而非 `prompt_async`。
+
+### 遗留项 / 下一步
+
+- [ ] 前一轮遗留不变：Senza PR #37 merge 后收敛 tool dict 返回路径；runtime #146 进 Senza
+  发布线后处理 `VisionDegraded`；desktop 打包层随下个安装包更新。
