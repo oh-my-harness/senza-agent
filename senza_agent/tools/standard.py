@@ -23,6 +23,7 @@ import re
 import subprocess
 import textwrap
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -31,25 +32,43 @@ from . import async_manager as _async_mod
 from . import watcher as _watcher_mod
 
 
+
 # ── Module-level state ref ──────────────────────────────────────────────────
-
-
+@dataclass
 class _StateRef:
     """Mutable shared state, set by agent.py via ``set_state``."""
 
     completion_report: Optional[dict] = None
     goal: str = ""
     advisor_requested: bool = False
-    evolved_tools: dict = {}
-    repair_candidates: dict = {}
-    repair_failures: dict = {}
-    repair_history: list = []
-    long_term: list = []
+    evolved_tools: dict = field(default_factory=dict)
+    repair_candidates: dict = field(default_factory=dict)
+    repair_failures: dict = field(default_factory=dict)
+    repair_history: list = field(default_factory=list)
+    long_term: list = field(default_factory=list)
     concept_memory: str = ""
-    runtime_patches: list = []
+    runtime_patches: list = field(default_factory=list)
     interrupt_handler: Any = None
     vision_supported: Optional[bool] = None
-    bad_image_urls: dict = {}
+    bad_image_urls: dict = field(default_factory=dict)
+
+
+# Zero-arg factories for every shared-state field set_state must guarantee.
+_STATE_DEFAULTS: dict = {
+    "completion_report": lambda: None,
+    "goal": lambda: "",
+    "advisor_requested": lambda: False,
+    "evolved_tools": dict,
+    "repair_candidates": dict,
+    "repair_failures": dict,
+    "repair_history": list,
+    "long_term": list,
+    "concept_memory": lambda: "",
+    "runtime_patches": list,
+    "interrupt_handler": lambda: None,
+    "vision_supported": lambda: None,
+    "bad_image_urls": dict,
+}
 
 
 _state = _StateRef()
@@ -58,10 +77,14 @@ _state = _StateRef()
 def set_state(state: Any) -> None:
     """Called by agent.py to share AgentState.
 
-    Accepts either a ``_StateRef``-like object or any object with the relevant
-    attributes; stores the reference so tools can read/write shared fields.
+    Stores the reference so tools read/write shared fields in place. Fields
+    the state object lacks (e.g. a custom/test state) get defaults on the
+    spot so tool callbacks never crash with AttributeError.
     """
     global _state
+    for name, default in _STATE_DEFAULTS.items():
+        if not hasattr(state, name):
+            setattr(state, name, default())
     _state = state
 
 

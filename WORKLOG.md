@@ -889,3 +889,44 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
   "dict 块返回错误信息应更友好"（PR #146 已把错误文本回灌问题一并解决——
   InvalidRequest 现在触发剥离重试而非裸错误）。若社区确有 dict 块需求，等有
   真实需求再按 1.3.0+ 基线重写。
+
+## 2026-08-31 | 修复 _StateRef/AgentState 字段失配导致的运行时崩溃
+
+**问题**：用户报告 `load_image` 崩溃 `AttributeError: 'AgentState' object has no attribute
+'vision_supported'`，`register_tool` 同理缺 `evolved_tools`。诊断完全正确：
+`agent.py:262` 的 `set_state(state)` 把模块级 `_state` 换成了真正的 `AgentState`，但
+`tools/standard.py` 的 `_StateRef` 有 10 个字段（evolved_tools、repair_candidates、
+repair_failures、repair_history、long_term、concept_memory、runtime_patches、
+interrupt_handler、vision_supported、bad_image_urls）在 `behavior/state.py` 的
+`AgentState` 上从不存在。初始提交 `30423b3` 就是这样——**这批工具从第一天起就必崩**，
+不是识图功能新引入的（351 个测试从没抓到，因为 `test_tools.py` 的 `_isolate_state`
+fixture 把 `_state` 换回全新 `_StateRef`，绕开了真实状态对象）。
+
+**修复**（3 文件 +89 −11）：
+1. `behavior/state.py`：`AgentState` 补齐全部 10 个缺失字段（dict/list 用
+   `field(default_factory=...)`，`vision_supported: bool | None = None`）。
+2. `tools/standard.py`：
+   - `_StateRef` 改为 `@dataclass`——原来是普通类的类级可变默认值
+     （`evolved_tools: dict = {}`），所有实例共享同一个 dict，
+     `_isolate_state` 的重置实际清不掉数据（潜在测试串扰 bug，顺手修掉）；
+   - 新增 `_STATE_DEFAULTS` 工厂表 + `set_state()` 对缺失字段就地补默认值，
+     以后再有字段失配会退化为空容器而不是 AttributeError 崩溃。
+3. `tests/test_integration.py`：两个回归测试——① AgentState 必须覆盖
+   `_STATE_DEFAULTS` 的每个字段；② `set_state` 对裸对象补字段后
+   register_tool 能正常工作。
+
+**验证**：
+- 全量 `pytest tests/ -q`：353 passed, 3 skipped（基线 351+3，净增 2 个回归测试）。
+- 真实生产路径复现→修复证明：`create_agent(load_config())` 后（此时 `_state` 是
+  `AgentState`），修复前 `load_image`/`register_tool` 必现 AttributeError；
+  修复后 load_image（文件不存在→error dict）、load_video（缺 opencv→error dict）、
+  register/delete/repair/promote 全生命周期、save/load_tools、remember 全部正常，
+  错误路径保持 `{"status": "error"}` 约定。
+- 插曲：第一次全量跑挂 4 个测试——`field(default_factory=...)` 在非 dataclass 上
+  只会存成 `Field` 对象（`'Field' object is not iterable`），`_StateRef` 补
+  `@dataclass` 后恢复；另一次 E2E 断言失败是 `_build_tool_recipe` 会对
+  python_code 做 `dedent().strip()`，是既有合理行为，非 bug。
+
+**遗留**：`interrupt_handler` 至今没有任何生产代码写入（grep 全仓库只有
+standard.py:1398 读），SSH 轮询中断（/stop）实际不会生效——等有真实需求时
+在 cli/webserver 层把 `ReplCommandHandler` 接到 state 上。

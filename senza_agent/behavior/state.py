@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -22,3 +23,16 @@ class AgentState:
     meta: dict = field(default_factory=dict)
     run_dir: str = ""
     tools: list = field(default_factory=list)
+    # ── Tools-module shared state (mirrors tools.standard._StateRef) ─────
+    # agent.py passes this dataclass to tools.standard.set_state(); every
+    # attribute the tool callbacks read/write must live here too.
+    evolved_tools: dict = field(default_factory=dict)
+    repair_candidates: dict = field(default_factory=dict)
+    repair_failures: dict = field(default_factory=dict)
+    repair_history: list = field(default_factory=list)
+    long_term: list = field(default_factory=list)
+    concept_memory: str = ""
+    runtime_patches: list = field(default_factory=list)
+    interrupt_handler: Any = None
+    vision_supported: bool | None = None
+    bad_image_urls: dict = field(default_factory=dict)

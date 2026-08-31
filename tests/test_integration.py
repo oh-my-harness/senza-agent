@@ -209,3 +209,44 @@ def test_full_hook_pipeline_wrapup_termination():
 
     sstop = behavior_should_stop(state)
     assert sstop({}) is True
+
+
+def test_agent_state_covers_tools_shared_fields():
+    """AgentState must carry every attribute tools.standard reads via _state.
+
+    agent.py calls set_state(AgentState) — any field the tool callbacks use
+    that is missing here crashes at runtime with AttributeError (regression
+    guard: load_image/load_video/register_tool/repair/delete were broken this
+    way until the fields were added).
+    """
+    from dataclasses import fields
+
+    from senza_agent.behavior.state import AgentState
+    from senza_agent.tools import standard
+
+    agent_fields = {f.name for f in fields(AgentState)}
+    for attr in standard._STATE_DEFAULTS:
+        assert attr in agent_fields, (
+            f"AgentState is missing '{attr}' used by tools.standard"
+        )
+
+
+def test_set_state_fills_missing_fields():
+    """set_state on a bare object fills defaults instead of crashing later."""
+    from senza_agent.tools import standard
+
+    class Bare:
+        pass
+
+    bare = Bare()
+    standard.set_state(bare)
+    try:
+        assert bare.evolved_tools == {}
+        assert bare.long_term == []
+        assert bare.vision_supported is None
+        assert standard.tool_register_tool(
+            name="rt", description="d", args_schema={},
+            python_code='def run(**kwargs):\n    return {"status": "ok", "output": 1}\n',
+        )["status"] == "ok"
+    finally:
+        standard.set_state(standard._StateRef())
