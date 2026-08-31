@@ -766,3 +766,52 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 
 - [ ] 前一轮遗留不变：Senza PR #37 merge 后收敛 tool dict 返回路径；runtime #146 进 Senza
   发布线后处理 `VisionDegraded`；desktop 打包层随下个安装包更新。
+
+## 2026-08-31 | 桌面端更新进度窗口乱码 + 无百分比修复
+
+### 现象与根因
+
+用户报告 Windows 桌面端检查更新时，下载进度弹窗中文全部乱码、且看不到百分比。
+
+- **乱码根因**：三处 `loadURL('data:text/html,' + encodeURIComponent(html))` 的 data: URL
+  MIME 类型没有 `charset` 参数，页面也没有 `<meta charset>`。Chromium 对无 charset 的
+  data: 文档按 OS locale 的传统编码解码（zh-CN Windows 上是 GB18030），UTF-8 字节按
+  GBK 解即成乱码（`正在下载` → `姝ｅ湪涓嬭浇` 一类）。
+- **无百分比根因（两层）**：
+  1. `setUpdateProgress` 走 `_execInProgressWin`（`executeJavaScript(...).catch(() => {})`），
+     首次调用发生在 `loadURL` 之后同帧，若 data: 文档尚未解析完，注入被静默吞掉——
+     取消按钮的 onclick 绑定同样受影响（本次补了 `did-finish-load` 等待）。
+  2. electron-updater 侧：`download-progress` 事件被节流到 1 秒 1 次
+     （ProgressCallbackTransform / DataSplitter 均 `nextUpdate = now + 1000`）；且
+     0.1.5→0.1.6 差分下载时 COPY 阶段不发进度（ProgressDifferentialDownloadCallbackTransform
+     明确 skip COPY），delta 小于 1 秒下载完时可能一次进度都不发。属上限限制，
+     已通过"初始 0%（连接中…）"文案兜底显示，下载真正开始后 1 秒内出百分比。
+
+### 修复（desktop/main.js，+19 −4）
+
+1. 三处 data: URL 全部补 `charset=utf-8` + `<meta charset="utf-8">`：
+   更新进度窗口（line 429）、启动 loading 窗口（line 383）、agent 启动失败错误窗口
+   （line 584，顺带对 err.message 做了 `&`/`<` HTML 转义）。
+2. 进度窗口初始 pct 文案由 `准备下载…` 改为 `0%（连接中…）`——差分下载 COPY 阶段
+   或 1 秒节流期内用户也能看到明确的进度语义，而非空白。
+3. `checkForUpdatesInteractive` 中创建进度窗口后等待 `did-finish-load` 再注入
+   cancel onclick / 进度脚本，消除 executeJavaScript 打在未加载文档上的竞态。
+
+### 验证
+
+- `node --check desktop/main.js` 语法 OK。
+- data: URL round-trip 测试：`encodeURIComponent` 后按声明 charset 解码，中文完整还原，
+  meta charset 存在，URL 长度 183 字符（远低于 Chromium data URL 上限）。
+- 从 main.js 提取真实页面模板做 HTML 结构解析：`charset meta: ['utf-8']`，`bar/pct/cancel`
+  三个 id 齐全，标题"正在下载 v0.1.6"、初始"0%（连接中…）"、取消按钮文案全部到位。
+- 进度 payload 算术验证：`{percent: 42.66, transferred: 33MB, total: 78MB, bps: 5.5MB/s}`
+  → `43%（33.0/78.0 MB，5.5 MB/s）`，与 setUpdateProgress 逻辑一致。
+- 页面生命周期模拟（初始 → 43% tick → 100% done）状态断言全过。
+- 环境无 Electron/jsdom/playwright，以上为静态提取 + DOM shim 级验证；真机表现待
+  下个安装包在 zh-CN Windows 上确认。
+
+### 遗留项 / 下一步
+
+- [ ] 本修复需随下个 desktop release 发版（tag 触发 build-windows.yml）才能到达用户。
+- [ ] 历史遗留不变：Senza PR #37 merge 后收敛 tool dict 返回路径；runtime #146 进发布线
+  后处理 `VisionDegraded`。

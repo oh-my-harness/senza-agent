@@ -380,7 +380,8 @@ function showLoadingWindow(message) {
     title: 'senza-agent', backgroundColor: '#0d1117',
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
-  win.loadURL('data:text/html,' + encodeURIComponent(
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+    `<!doctype html><html><head><meta charset="utf-8"></head>` +
     `<div style="font-family:system-ui;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">` +
     `<div style="font-size:18px;font-weight:600;">SenzaAgent</div>` +
     `<div id="status" style="font-size:14px;color:#8b949e;">${message}</div>` +
@@ -423,12 +424,16 @@ function showUpdateProgressWindow(version) {
     title: 'senza-agent 更新', backgroundColor: '#0d1117',
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
-  _updateProgressWin.loadURL('data:text/html,' + encodeURIComponent(
+  // charset=utf-8 in the MIME type AND <meta charset> in the document: without one,
+  // Chromium decodes the data: URL body with the OS locale's legacy encoding
+  // (GB18030 on zh-CN Windows), producing mojibake for the Chinese UI text.
+  _updateProgressWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+    `<!doctype html><html><head><meta charset="utf-8"></head>` +
     `<div style="font-family:system-ui;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">` +
     `<div style="font-size:16px;font-weight:600;">正在下载 v${version}</div>` +
     `<div style="width:300px;height:6px;background:#21262d;border-radius:3px;overflow:hidden;">` +
     `<div id="bar" style="width:0%;height:100%;background:#58a6ff;border-radius:3px;transition:width 0.2s ease;"></div></div>` +
-    `<div id="pct" style="font-size:13px;color:#8b949e;">准备下载…</div>` +
+    `<div id="pct" style="font-size:13px;color:#8b949e;">0%（连接中…）</div>` +
     `<button id="cancel" style="margin-top:4px;padding:5px 18px;font-size:13px;color:#c9d1d9;background:#21262d;border:1px solid #30363d;border-radius:6px;cursor:pointer;">取消</button>` +
     `</div>`));
   return _updateProgressWin;
@@ -497,6 +502,16 @@ async function checkForUpdatesInteractive(win) {
       autoUpdater.autoDownload = true;
       const token = new CancellationToken();
       showUpdateProgressWindow(latest);
+      // Wait for the data: URL document to finish parsing before running any
+      // executeJavaScript against it — earlier calls could hit an unloaded
+      // window and be silently swallowed by _execInProgressWin's catch.
+      await new Promise((resolve) => {
+        if (_updateProgressWin.webContents.isLoading()) {
+          _updateProgressWin.webContents.once('did-finish-load', resolve);
+        } else {
+          resolve();
+        }
+      });
 
       // Cancel button inside the progress window aborts the transfer.
       _execInProgressWin(
@@ -566,7 +581,7 @@ app.whenReady().then(async () => {
     console.error('[desktop] Failed to start agent:', err.message);
     if (_loadingWin) _loadingWin.close();
     mainWindow = new BrowserWindow({ width: 500, height: 300, title: 'senza-agent — Error' });
-    mainWindow.loadURL('data:text/html,<h2 style="font-family:sans-serif;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;align-items:center;justify-content:flex-start;padding:20px;">' + err.message + '</h2>');
+    mainWindow.loadURL('data:text/html;charset=utf-8,<meta charset="utf-8"><h2 style="font-family:sans-serif;color:#e6edf3;background:#0d1117;height:100vh;margin:0;display:flex;align-items:center;justify-content:flex-start;padding:20px;">' + err.message.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</h2>');
     return;
   }
 
