@@ -851,3 +851,41 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 
 - [ ] 本项与乱码修复（73ee40c）都需随下个 desktop release 发版。
 - [ ] 历史遗留不变：Senza PR #37、runtime #146。
+
+## 2026-08-31 | runtime PR #146 已合并：影响分析与下一步
+
+### 状态确认
+
+- llm-harness-runtime origin/main HEAD = `64db136` "Merge pull request #146"，分支
+  `fix/vision-degradation-145`（`1b02d6a` fix(loop) + `1fc78c8` chore parking_lot）已进主线。
+- 合并内容：`AgentEvent::VisionDegraded { reason, stripped_blocks }` 新事件（events.rs）；
+  `loop_fn.run_loop` 在 `LlmError::InvalidRequest` 时一次性 strip 图片/文档块并重试
+  （`vision::strip_vision`，one-shot guard 防死循环）；ToolResult/User 两类消息的视觉块
+  剥离 + 修复提示文案。
+- **关键限制：senza-sdk 1.3.0 wheel 的 `EventType` 枚举没有 VisionDegraded**
+  （本机 .venv 实测：ABORTED/AGENT_END/ERROR/... 12 个成员）。1.3.0 wheel 构建于
+  runtime tag `320744c`（v1.3.0），早于今天的合并。事件在 FFI 边界就被丢弃，
+  senza-agent 侧现在什么也收不到。
+
+### 下一步（等 SDK 发版后）
+
+1. Senza 仓库发布包含 `64db136` 的 SDK 版本（如 1.4.0）。
+2. senza-agent：`requirements.txt`/`pyproject.toml` 升 `senza-sdk>=1.4.0`。
+3. `qevos_bridge.StateBridge._convert_event` 增加 `vision_degraded` 分支：
+   转 `{"type": "error"|"notice", "text": "模型不支持图片输入，已剥离 N 张图片后重试"}`，
+   状态桥置 warning 提示；事件本身不改变 status（run 会继续）。
+4. task.py 的 terminal 事件集合不变（VisionDegraded 非终态，无需处理）。
+
+### senza PR #37 的判断
+
+用户判断正确：**#37 是风格/API 形状问题，不是功能缺口，不建议按原样合并**。
+- 合并 #146（缺口 2/3）后，text-only provider 的图片拒收已在 runtime 层自愈
+  （剥离+重试+通知），#37 解决的"dict content 块被拒"只剩"风格宽容度"价值：
+  tool 返回裸 Attachment / `[Attachment]` 才是 SDK 1.3.0 的官方路径
+  （senza-agent 的 load_image/load_video 已走这条路）。
+- 且 #37 有实证问题：其 `test_tool_attachment_return.py` 对 1.3.0 wheel 失败
+  （缺 `Tool.drive`），分支基于更早的 main。
+- 建议：close #37（或不合并），在 issue #145 的"缺口 1"讨论里改为记录
+  "dict 块返回错误信息应更友好"（PR #146 已把错误文本回灌问题一并解决——
+  InvalidRequest 现在触发剥离重试而非裸错误）。若社区确有 dict 块需求，等有
+  真实需求再按 1.3.0+ 基线重写。
