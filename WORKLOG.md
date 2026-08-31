@@ -930,3 +930,11 @@ fixture 把 `_state` 换回全新 `_StateRef`，绕开了真实状态对象）�
 **遗留**：`interrupt_handler` 至今没有任何生产代码写入（grep 全仓库只有
 standard.py:1398 读），SSH 轮询中断（/stop）实际不会生效——等有真实需求时
 在 cli/webserver 层把 `ReplCommandHandler` 接到 state 上。
+
+## 2026-08-31 | 发布 v0.1.7（含状态失配修复）
+
+版本四处同步 0.1.6 → 0.1.7（desktop/package.json、package-lock.json、pyproject.toml、
+senza_agent/__init__.py），提交后打 tag v0.1.7 触发 build-windows.yml 出 Windows 安装包
+（draft release，需手动 publish）。本版内容：`db655d5` AgentState/_StateRef 字段失配
+修复（load_image/load_video/register_tool 等自初始提交起运行时必崩）+ `73ee40c` 更新
+进度窗口中文乱码/百分比 + `88ef4f8` 首次启动 (N/6) 步骤进度。
