@@ -129,6 +129,17 @@ function setLoadingMessage(msg) {
   }
 }
 
+// Friendly Chinese labels for the setup steps reported by setup_python.ps1
+// ("[STEP n/6] ..."). Keyed by step number.
+const SETUP_STEP_LABELS = {
+  1: '检查 Python 环境…',
+  2: '创建 Python 虚拟环境…',
+  3: '升级 pip…',
+  4: '安装 Python 依赖（可能需要几分钟）…',
+  5: '安装 senza-agent…',
+  6: '即将完成…',
+};
+
 function ensurePythonVenv() {
   if (!app.isPackaged || process.platform !== 'win32') return Promise.resolve();
 
@@ -139,7 +150,7 @@ function ensurePythonVenv() {
   if (!fs.existsSync(setupScript)) return Promise.resolve();
 
   console.log('[desktop] No Python venv found — running setup_python.ps1...');
-  setLoadingMessage('Creating Python virtual environment...');
+  setLoadingMessage('(1/6) 检查 Python 环境…');
 
   return new Promise((resolve) => {
     const proc = spawn('powershell.exe', [
@@ -149,16 +160,26 @@ function ensurePythonVenv() {
       '-InstallDir', INSTALL_DIR,
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    // Lines can be split across 'data' chunk boundaries; keep the trailing
+    // partial line in a buffer so [STEP] markers are never missed.
+    let partial = '';
     proc.stdout.on('data', (data) => {
-      const text = data.toString().trim();
-      if (!text) return;
-      console.log('[setup]', text);
-      // Forward meaningful lines to the loading window
-      if (text.includes('Creating'))       setLoadingMessage('Creating Python virtual environment...');
-      else if (text.includes('Upgrading'))  setLoadingMessage('Upgrading pip...');
-      else if (text.includes('Installing dependencies')) setLoadingMessage('Installing Python packages...');
-      else if (text.includes('senza-agent')) setLoadingMessage('Installing senza-agent...');
-      else if (text.includes('complete'))   setLoadingMessage('Finalizing setup...');
+      const text = partial + data.toString();
+      const lines = text.split(/\r?\n/);
+      partial = lines.pop() || '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) continue;
+        console.log('[setup]', t);
+        // setup_python.ps1 emits "[STEP n/total] label" markers; forward the
+        // latest one to the loading window as a (n/total) progress counter.
+        const m = t.match(/^\[STEP (\d+)\/(\d+)\]\s*(.*)$/);
+        if (m) {
+          const [, n, total, label] = m;
+          if (label === 'done') continue; // keep showing the in-flight step
+          setLoadingMessage(`(${n}/${total}) ${SETUP_STEP_LABELS[n] || label}`);
+        }
+      }
     });
     proc.stderr.on('data', (data) => {
       const text = data.toString().trim();

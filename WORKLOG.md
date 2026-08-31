@@ -815,3 +815,39 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 - [ ] 本修复需随下个 desktop release 发版（tag 触发 build-windows.yml）才能到达用户。
 - [ ] 历史遗留不变：Senza PR #37 merge 后收敛 tool dict 返回路径；runtime #146 进发布线
   后处理 `VisionDegraded`。
+
+## 2026-08-31 | 首次启动环境配置增加 (N/6) 步骤进度
+
+### 需求与实现
+
+用户要求：安装完第一次使用时，配置环境的提示信息后面加 "(1/7)" 式进度。
+
+实现分两层：
+
+1. **desktop/setup_python.ps1**：新增 `Write-Step` / `Write-StepDone` helper（`$script:StepTotal = 6`），
+   六个步骤各打一行 `[STEP n/6] <label>` / `[STEP n/6] done`：
+   1=Locating Python、2=Creating virtual environment、3=Upgrading pip、
+   4=Installing Python packages（耗时长，文案注明 may take a few minutes）、
+   5=Installing senza-agent package、6=Finishing up。
+   原步骤里与新 marker 重复的三条 Write-Host（Upgrading pip/Installing dependencies/
+   Installing senza-agent package）删除，避免日志双份。
+2. **desktop/main.js**：`ensurePythonVenv` 的 stdout 处理改为按行解析 `[STEP n/total]`
+   marker，映射到 `SETUP_STEP_LABELS` 中文文案后在 loading 窗口显示 `(n/total) 中文…`；
+   `done` 行不覆盖正在进行的步骤文案。启动时先显示固定 `(1/6) 检查 Python 环境…`。
+   **行缓冲**：`data` 事件可能在行中间截断（本机实测 1 字节分片时 marker 会漏检），
+   增加 `partial` 缓冲拼接尾部残行，保证 marker 永不丢失。
+
+### 验证
+
+- `node --check desktop/main.js` OK。
+- 步骤序列静态断言：`Write-Step` 1..6 各出现一次、`Write-StepDone` 1..6 齐全、
+  重复 Write-Host 已清除。
+- stdout 解析器行为测试：按真实 CRLF 输出喂入全六步（含 done 行、pip 噪音行），
+  产出消息恰好为 `(1/6) 检查 Python 环境…` … `(6/6) 即将完成…`，PASS。
+- 跨 chunk 分片测试：marker 被切成 3 段喂入仍正确识别（缓冲生效），PASS。
+- 本机无 pwsh，ps1 侧仅静态验证；真机首次安装时六个 marker 会如实打出。
+
+### 遗留项 / 下一步
+
+- [ ] 本项与乱码修复（73ee40c）都需随下个 desktop release 发版。
+- [ ] 历史遗留不变：Senza PR #37、runtime #146。
