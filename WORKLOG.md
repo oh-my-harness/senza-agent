@@ -602,3 +602,34 @@ CI run 33160675034 success（~2 分钟）；draft 378391523（exe + latest.yml�
 ### 遗留项
 
 - 进度窗口在真实 Windows 上需肉眼确认视觉（无边框窗口无关闭按钮，仅靠取消按钮/自动关闭退出，属预期）。
+
+## 2026-08-31 | senza-sdk 1.3.0 多模态评估：Qevos 识图功能差距对比 + 提 issue #145
+
+### 本次做了什么
+
+评估 senza-sdk 1.3.0（`senza_sdk-1.3.0-cp39-abi3-manylinux_2_28_x86_64.whl`，pin runtime `cb58373`）相对 QevosAgent 识图功能（`tool_load_image` → content_blocks → user 消息注入 → 后端转换）的完成度，并已安装到 guiarcgen 环境。
+
+**1.3.0 已具备（端到端实测通过）**：
+- 工具回调返回裸 `Attachment` 或 `Attachment`/`str` 混合 list → 正确转 `DataBlock::Image`
+- `senza.image_url(url)`（URL 透传不下载）/ `image_base64(bytes, mime_type)` / `document_url()` / `document_file()`
+- 用户侧 `prompt(text, attachments=[...])` / `steer(text, attachments=[...])`
+- OpenAI 兼容 wire 格式正确：tool 消息产出 `[{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]`（本地 mock OpenAI SSE 服务验证）
+- runtime `ImageSource` 有 `Base64`+`Url` 双变体；adapter OpenAI/Anthropic/DeepSeek 三端均支持
+
+**缺口（共 3 个）**：
+1. 主要：工具回调返回 Qevos 风格 dict `{"content":[{"type":"image","media_type","data"}]}` → `parse_tool_result`（Senza `src/core/pytool.rs`）只认 `type:text`，报 `unsupported content block type: image`；且该错误以 tool 消息文本回传给 LLM（实测确认），模型无法自我纠正，工具表现为静默失败。存量 Qevos 风格工具无法平滑迁移。
+2. 次要：无 vision 能力探测/降级钩子（Qevos 有错误串启发式识别 + `_strip_vision_blocks` 自愈；senza 无模型 modality 元数据、无 4xx 自动降级）。
+3. 提示：Document 块跨 provider 支持不一（GLM/DeepSeek 系多不支持 PDF 输入），缺支持矩阵文档。
+
+**动作**：已在 `oh-my-harness/llm-harness-runtime` 提 issue #145（缺口 1 为主，附复现路径与环境信息）。
+
+### 遇到的问题与结论
+
+- 前一会话遗留的"user_interjection：glm-5.3flash 提示 textonly"问题未定位到出处——搜遍 senza-agent/Senza/QevosAgent 源码、SDK wheel 二进制、会话 meta（记录的是 glm-5.2）均无 "textonly" 字样，疑似指运行界面/宿主层文案或 GLM API 侧报错文案，被用户打断后转向当前对比任务。
+- 对 senza-agent 本体的后续改造方向：`tools/standard.py` 的 `tool_load_image`/`tool_load_video` 返回值改为携带 `Attachment`（裸值或 list），`_state.vision_supported` 由错误探测驱动（依赖 SDK 缺口 2 的结构化 error 事件）；`_sdk_compat.stream_prompt` 需加 `attachments` 透传参数（1.3.0 的 `prompt` 签名已支持）。
+
+### 遗留项 / 下一步
+
+- [ ] 等 issue #145 的 dict content-block 支持落地后，改造 senza-agent `tool_load_image` 返回 dict content-block（或先用裸 Attachment 方案提前落地）
+- [ ] `_sdk_compat.stream_prompt` 加 attachments 透传
+- [ ] vision-unsupported 自愈逻辑（等 SDK 结构化错误事件）
