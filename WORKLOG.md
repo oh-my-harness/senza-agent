@@ -1056,3 +1056,20 @@ MCP 生命周期修复。rebase 无冲突，全量 `pytest tests/ -q` → 363 pa
 打 tag v0.1.9 触发 build-windows.yml 出 Windows 安装包（draft release，需手动
 publish；上次踩过的坑：CI 建的 draft tag 是 `untagged-…` 占位，PATCH
 `tag_name` 后才能 publish）。
+
+### v0.1.9 发布记录（同日补充）
+
+- **git-over-HTTPS 推出不去**：`git push` 反复 `Empty reply from server` / 挂死
+  两分钟以上，但 `git fetch` 与 `api.github.com` 都正常。改走 REST：本地
+  `git diff --name-status` → blob → tree(base_tree) → commit → PATCH
+  `refs/heads/main`，两个 commit 依次搬到远端（1b5e94c / e5ad684），tree 与本地
+  逐字节一致（`e4fb15a6…`）。tag 用 `POST /git/refs` 创建（tag 走 API 创建
+  **会**触发 `on: push: tags` 工作流，run 41614960421），随后 fetch 恢复正常，
+  `reset --hard origin/main` 把本地对齐到远端 sha，避免重复历史。
+- CI run 41614960421 success。electron-builder 照旧产生两个 draft：
+  432519760（latest.yml + exe 82,162,749 B）与 432519763（仅 blockmap 87,461 B）。
+  处置：从后者下载 blockmap 上传到前者（uploads.github.com），删掉后者。
+- 已发布：releases/latest = v0.1.9，assets 齐全（exe + blockmap + latest.yml），
+  feed `version: 0.1.9` / `sha512: YvJuMXUzX8SYrz+3KV3xWN9+0oAIFAOW4VIb+q1Yw0mbSkKnY9B1kkhtF3m9WCTOeW1hmlmaGAe3ejZrvgQ4HQ==`。
+  桌面端「检查更新」即可拉到。
+
