@@ -1,6 +1,6 @@
 {
   "name": "senza-agent-desktop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "senza-agent Desktop App",
   "main": "main.js",
   "scripts": {

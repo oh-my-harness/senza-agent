@@ -1,5 +1,53 @@
 # 工作日志
 
+## 2026-11-03 | 发布 v0.1.8（MCP 工具不加载 + 子进程泄漏修复）
+
+版本四处同步 0.1.7 → 0.1.8（desktop/package.json、package-lock.json、pyproject.toml、
+senza_agent/__init__.py），提交后打 tag v0.1.8 触发 build-windows.yml 出 Windows 安装包
+（draft release，需手动 publish）。
+
+### 本版内容
+
+修复 senza-sdk 1.3.0 的两个静默缺陷（上游 issue #1）：
+
+1. **`HarnessBuilder.mcp_config_file()` / `mcp_server()` 是静默空操作** —— 返回 `self`
+   但不接入任何 MCP 工具，无异常无告警。实测矩阵：`mcp_config_file` 0 个 `mcp__*`、
+   `mcp_server` 0 个、`with_mcp_manager` 9 个（唯一有效路径）。
+2. **`HarnessBuilder.session_repo()` 静默清空全部 MCP 工具** —— 与调用顺序无关，
+   重新挂载 manager 也无法恢复（试过 `mgr→repo→mgr`、`repo→mgr→repo→mgr` 均失败）。
+
+同时 `mcp_config_file()` 内部创建的 manager 无人持有引用、无人 `disconnect_all()`，
+导致 npx/node MCP 子进程在应用退出后残留。实测一台机器累积 **88 个** lark-mcp 进程
+（其中 8 个是 4 天前启动的僵尸）。这些进程共享同一份 OAuth token 存储，在
+access_token 过期时并发刷新**一次性 refresh_token**，互相作废，最终使飞书 token 链
+彻底失效（`20038 Token parse failed`）。
+
+### 改动
+
+- 新增 `senza_agent/mcp_lifecycle.py`：显式 `McpManager` + `with_mcp_manager()`；
+  轮询 `get_status` 等待就绪（180s 上限）；三层子进程回收 —— `atexit` + 信号处理
+  （SIGINT/SIGTERM/SIGBREAK）+ Windows Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，
+  硬杀也能回收）。
+- `agent.py`：MCP 改用 `mcp_lifecycle.create_manager()`；MCP 启用时跳过
+  `session_repo()`（对话历史仍由 `RunPersistence` 持久化到 `~/.senza-agent/runs/`）。
+- `cli.py`：退出路径显式 `disconnect_all()`。
+- 新增 `tests/test_mcp_lifecycle.py`：9 个用例，不依赖真实 MCP 服务器。
+
+### 验证结果
+
+- MCP 工具：40 个（31 feishu + 9 folderkb），两服务器 `connected`，`errors={}`。
+- 硬杀测试：`taskkill /F` 后 lark-mcp 子进程归零（Job Object 生效）。
+- 回归：打补丁前后测试结果逐项一致（8 failed / 102 passed / 16 errors，均为
+  Windows 环境既有问题：HOME vs USERPROFILE、`sleep` 命令、路径分隔符、缺 pytest-aiohttp）。
+
+### 已知限制
+
+- `max_turns` 无法从 Python 配置：`senza.strategy.loop_safety(config)` 的绑定
+  （`Senza/src/strategy/pyloopsafety.rs`）只读 `enabled` 键，其余静默忽略。实测默认
+  50 轮，传 `{"max_turns": 200}` 仍报 50，只有 `{"enabled": False}` 能突破但会关闭
+  全部四道守卫（death_spiral / repetition / failure_breaker / truncation）。
+  已记录到上游 issue #1 评论。
+
 ## 2026-08-27 | SKILLS 目录布局迁移 + karpathy-guidelines skill + config.py 默认路径修复
 
 ### 本次做了什么
