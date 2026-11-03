@@ -1039,3 +1039,20 @@ smoke：`OPENAI_BASE_URL=hyper-op/v1` + `OPENAI_API_BASE=http://127.0.0.1:18080/
 
 **遗留**：`SENZA_AGENT_API_KEY` / `SENZA_AGENT_API_BASE` 仍是面板看不见的
 高优先级覆盖项，用户只能靠 diag 脚本发现；是否在面板里展示/统一命名待定。
+
+## 2026-11-03 | 发布 v0.1.9（api_base 优先级修复）
+
+版本四处同步 0.1.8 → 0.1.9（desktop/package.json、package-lock.json、
+pyproject.toml、senza_agent/__init__.py）。本版唯一功能改动就是
+`_apply_env()` 把 `OPENAI_BASE_URL` 提到 `OPENAI_API_BASE` 之前
+（+ 回归测试 + `scripts/diag_llm_auth.py`），修的是「面板/探针校验 A 地址、
+harness 实际请求 B 地址 → 有效凭据也报 unauthorized」这条线上事故。
+
+**发布注意**：本地 main 当时落后 origin/main 两个 commit（v0.1.8 的 MCP 修复
+只存在于远端），先 `git rebase origin/main` 再 bump，避免回退掉 052c818 的
+MCP 生命周期修复。rebase 无冲突，全量 `pytest tests/ -q` → 363 passed, 3 skipped
+（v0.1.8 MCP 测试 142 行 + 本次回归测试）。
+
+打 tag v0.1.9 触发 build-windows.yml 出 Windows 安装包（draft release，需手动
+publish；上次踩过的坑：CI 建的 draft tag 是 `untagged-…` 占位，PATCH
+`tag_name` 后才能 publish）。
