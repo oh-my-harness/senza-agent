@@ -4,6 +4,7 @@ Reads ``~/.senza-agent/config.json`` then applies environment variable overrides
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field, asdict
@@ -312,13 +313,75 @@ def create_provider(cfg: Config):
     )
 
 
+def _fingerprint(value: str | None) -> str:
+    """Secret-safe key fingerprint: enough to compare two keys, not to leak one."""
+    if value is None:
+        return "<unset>"
+    if value == "":
+        return "<empty>"
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    shown = f"{value[:6]}…{value[-4:]}" if len(value) > 12 else value
+    return f"len={len(value)} sha256={digest} {shown}"
+
+
+_CRED_ENV = (
+    "SENZA_AGENT_API_KEY", "OPENAI_API_KEY", "OPENAI_OPENAI_API_KEY",
+    "BACKUP_OPENAI_API_KEY", "BACKUP2_OPENAI_API_KEY",
+    "OPENAI_BASE_URL", "OPENAI_API_BASE", "SENZA_AGENT_API_BASE",
+    "OPENAI_OPENAI_BASE_URL", "PREFERRED_API", "SENZA_AGENT_PROVIDER_TYPE",
+)
+
+
+def credential_diag() -> str:
+    """One-line, secret-safe description of what the next LLM call will use.
+
+    Appended to provider errors (``provider error: unauthorized``) so a 401 can
+    be traced instead of guessed: it names the effective provider / base /
+    model and the key fingerprint, and reports each credential env var as
+    ``set`` / ``<empty>`` / ``<unset>``.
+    """
+    try:
+        cfg = load_config()
+        head = (
+            f"provider={cfg.provider_type} model={cfg.model} "
+            f"base={cfg.api_base or '<empty>'} key={_fingerprint(cfg.api_key)}"
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never raise
+        head = f"<config load failed: {exc}>"
+    states = []
+    for name in _CRED_ENV:
+        value = os.environ.get(name)
+        if name not in os.environ:
+            states.append(f"{name}=<unset>")
+        elif not value:
+            states.append(f"{name}=<empty>")
+        else:
+            states.append(f"{name}=set")
+    return "[diag] " + head + " | " + " ".join(states)
+
+
+def diag_suffix(exc: BaseException) -> str:
+    """Return ``"\\n[diag] …"`` for auth-ish failures, else an empty string."""
+    message = str(exc).lower()
+    if "unauthorized" in message or "401" in message:
+        try:
+            return "\n" + credential_diag()
+        except Exception:  # noqa: BLE001
+            return ""
+    return ""
+
+
+
 # ── Runtime settings file (~/.senza-agent/settings.json) ───────────────────
 
 def load_settings_into_env() -> None:
     """Load ``~/.senza-agent/settings.json`` into ``os.environ``.
 
     Called at startup so the dashboard-saved settings take effect without
-    a separate ``.env`` file. Existing env vars are NOT overwritten (env wins).
+    a separate ``.env`` file.  Existing *non-empty* env vars win; an env var
+    that is present but empty (``OPENAI_API_KEY=`` in a .env, or a blank
+    Windows user variable) is treated as unset, otherwise it would silently
+    shadow the dashboard value and send requests out with no credentials.
     """
     path = _settings_file()
     if not path.is_file():
@@ -336,10 +399,10 @@ def load_settings_into_env() -> None:
             for sub_key, sub_val in val.items():
                 ssub = str(sub_val).strip() if sub_val is not None else ""
                 env_key = f"SENZA_AGENT_{sub_key.upper()}"
-                if ssub and env_key not in os.environ:
+                if ssub and not os.environ.get(env_key):
                     os.environ[env_key] = ssub
             continue
-        if isinstance(val, str) and val and key not in os.environ:
+        if isinstance(val, str) and val and not os.environ.get(key):
             os.environ[key] = val
 
 

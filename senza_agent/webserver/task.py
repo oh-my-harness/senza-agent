@@ -155,7 +155,13 @@ class TaskManager:
             if prompt_error:
                 raise prompt_error[0]
         except Exception as e:
-            await _emit({"type": "error", "message": str(e)})
+            from senza_agent.config import diag_suffix
+
+            suffix = diag_suffix(e)
+            if suffix:
+                import sys
+                print(f"[senza-agent] {e}{suffix}", file=sys.stderr)
+            await _emit({"type": "error", "message": str(e) + suffix})
 
         elapsed = time.time() - self._task_start
         summary = {

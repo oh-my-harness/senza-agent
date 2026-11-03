@@ -1073,3 +1073,32 @@ publish；上次踩过的坑：CI 建的 draft tag 是 `untagged-…` 占位，P
   feed `version: 0.1.9` / `sha512: YvJuMXUzX8SYrz+3KV3xWN9+0oAIFAOW4VIb+q1Yw0mbSkKnY9B1kkhtF3m9WCTOeW1hmlmaGAe3ejZrvgQ4HQ==`。
   桌面端「检查更新」即可拉到。
 
+## 2026-11-03 | v0.1.10：空环境变量遮蔽面板凭据 + 401 自诊断
+
+**新证据**：用户升到 v0.1.9 后仍报 `unauthorized`。上一版只修了 api_base 的
+**取值优先级**，但没覆盖「变量存在但为空」这条路径 —— 这类值在
+`load_settings_into_env()` 里被判定为"已设置"，于是 **settings.json 整条被跳过**，
+harness 拿着空 key 发请求。
+
+**实测复现**（本机，settings.json 里放正确 key/base，环境里 `OPENAI_API_KEY=`、
+`OPENAI_BASE_URL=` 置空）：
+- 修复前：`base='http://api.hyper-op.com' key=''` → `llm provider error:
+  unauthorized`（hyper-op 对空 Bearer 就是 401 `Invalid token`，已单独验证）。
+- 修复后：`base='http://api.hyper-op.com/v1' key_len=51` → chat 200。
+
+**修复**：
+1. `config.py::load_settings_into_env`：`key not in os.environ` → `not
+   os.environ.get(key)`（嵌套 sub-key 同理）。空串视为未设置，面板值生效。
+2. 新增 `config.credential_diag()` / `diag_suffix(exc)`：输出**脱敏**的生效
+   provider/base/model + key 指纹（长度、sha256 前 12 位、首尾 4 字符）+ 每个
+   凭据变量态（set / `<empty>` / `<unset>`）。
+3. `webserver/task.py` 与 `cli.py::_run_single_task`：异常含 unauthorized/401 时
+   把 `[diag] …` 拼到错误文本尾部（桌面端会直接显示在对话里），同时写 stderr。
+4. `scripts/diag_llm_auth.py`：区分 `<empty>` 与 `<unset>`，空变量直接标注。
+5. 测试：`test_blank_env_does_not_shadow_settings`（空环境不得遮蔽 settings.json）、
+   `test_credential_diag_reports_state_without_leaking_key`（指纹不含明文）。
+   全量 365 passed, 3 skipped。
+
+**为什么这次敢发版**：即使空变量不是用户机器上的真实原因，v0.1.10 起 401 的
+错误文本自带 base/key 指纹/变量态，下一次报错本身就是诊断报告，不需要再靠猜。
+

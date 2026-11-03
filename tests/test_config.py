@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from senza_agent.config import Config, load_config, WebConfig, BehaviorConfig
@@ -82,6 +83,58 @@ _SETTINGS_ENV_KEYS = (
     "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
     "SENZA_AGENT_THINKING_LEVEL", "SENZA_AGENT_ADVISOR_INTERVAL",
 )
+
+
+def test_blank_env_does_not_shadow_settings(tmp_path, monkeypatch):
+    """A present-but-empty env var must not hide the dashboard credentials.
+
+    Regression: ``OPENAI_API_KEY=`` in a .env file (or a blank Windows user
+    variable) made load_settings_into_env() skip settings.json, so the harness
+    was built without a key and every call died with
+    "llm provider error: unauthorized".
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    config_dir = tmp_path / ".senza-agent"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text(json.dumps({
+        "OPENAI_BASE_URL": "http://dashboard.test/v1",
+        "OPENAI_API_KEY": "sk-from-dashboard",
+        "OPENAI_MODEL": "model-from-dashboard",
+    }))
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("OPENAI_MODEL", "")
+
+    from senza_agent.config import load_settings_into_env
+    load_settings_into_env()
+    assert os.environ["OPENAI_API_KEY"] == "sk-from-dashboard"
+
+    cfg = load_config()
+    assert cfg.api_base == "http://dashboard.test/v1"
+    assert cfg.api_key == "sk-from-dashboard"
+    assert cfg.model == "model-from-dashboard"
+
+
+def test_credential_diag_reports_state_without_leaking_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-value-1234567890")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+
+    from senza_agent.config import credential_diag, diag_suffix
+
+    text = credential_diag()
+    assert "sk-secret-value-1234567890" not in text
+    assert "len=26" in text and "sha256=" in text
+    assert "OPENAI_BASE_URL=<empty>" in text
+    assert "base=<empty>" in text
+    assert "SENZA_AGENT_API_KEY=<unset>" in text
+
+    assert diag_suffix(RuntimeError("llm provider error: unauthorized")).startswith("\n[diag]")
+    assert diag_suffix(RuntimeError("boom")) == ""
 
 
 def test_save_settings_mirrors_web_compaction_to_config(tmp_path, monkeypatch):

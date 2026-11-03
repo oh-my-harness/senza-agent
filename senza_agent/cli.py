@@ -649,6 +649,10 @@ def _run_single_task(harness, task: str, timeout_ms: int = 300000) -> None:
             harness.abort()
         except Exception:
             pass
+    except Exception as e:
+        from senza_agent.config import diag_suffix
+
+        print(f"{RED}Task failed: {e}{diag_suffix(e)}{RESET}")
 
 
 def _interactive_repl(harness, timeout_ms: int = 300000) -> None:

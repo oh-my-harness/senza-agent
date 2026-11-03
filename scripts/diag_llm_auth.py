@@ -50,8 +50,10 @@ OTHER_ENV = [
 
 def fp(value: str | None) -> str:
     """Irreversible fingerprint: enough to tell two keys apart, not to leak one."""
-    if not value:
+    if value is None:
         return "<unset>"
+    if value == "":
+        return "<empty>  (blank; <=0.1.9 let this shadow settings.json)"
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
     visible = value[:6] + "…" + value[-4:] if len(value) > 12 else value
     extra = ""
@@ -68,7 +70,13 @@ def show_env() -> None:
         print(f"  {name:26} {fp(os.environ.get(name))}")
     for name in OTHER_ENV:
         val = os.environ.get(name)
-        if val:
+        if val is None:
+            if name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+                continue
+            print(f"  {name:26} <unset>")
+        elif val == "":
+            print(f"  {name:26} <empty>")
+        else:
             print(f"  {name:26} {val}")
     for path in (".env",):
         if os.path.isfile(path):
