@@ -832,6 +832,13 @@ def main(argv: list[str] | None = None) -> int:
                 harness.shutdown()
             except Exception:
                 pass
+        # Disconnect MCP servers so their npx/node children do not outlive us.
+        try:
+            from senza_agent import mcp_lifecycle
+
+            mcp_lifecycle.disconnect_all()
+        except Exception:
+            pass
 
     return 0
 

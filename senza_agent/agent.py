@@ -147,7 +147,11 @@ def create_agent(config: Config) -> Any:
             cp.model, cp.model_context_window, cp.model_max_tokens
         )
 
-    if config.sessions_dir:
+    # NOTE: builder.session_repo() silently drops every MCP tool (senza-sdk
+    # 1.3.0, issue #1), in any call order, and re-attaching the manager does
+    # not recover them.  Skip it when MCP is enabled; conversation history is
+    # still persisted by RunPersistence under ~/.senza-agent/runs/.
+    if config.sessions_dir and not config.mcp_config:
         try:
             builder = builder.session_repo(
                 senza.knowledge.jsonl_session_repo(config.sessions_dir)
@@ -243,11 +247,17 @@ def create_agent(config: Config) -> Any:
             print(f"Warning: skills loading failed: {e}", file=sys.stderr)
 
     # ── MCP ─────────────────────────────────────────────────────────────
+    # builder.mcp_config_file() / mcp_server() are silent no-ops in senza-sdk
+    # 1.3.0: they return self but wire zero tools.  An explicit McpManager is
+    # the only working path.  See issue #1.
     if config.mcp_config:
         try:
-            builder = builder.mcp_config_file(config.mcp_config)
+            from senza_agent import mcp_lifecycle
+
+            mcp_manager = mcp_lifecycle.create_manager(config.mcp_config)
+            builder = builder.with_mcp_manager(mcp_manager)
         except Exception as e:
-            print(f"Warning: MCP config setup failed: {e}", file=sys.stderr)
+            print(f"Warning: MCP setup failed: {e}", file=sys.stderr)
 
     # ── Sub-agent spawn ─────────────────────────────────────────────────
     if config.spawn_enabled:
