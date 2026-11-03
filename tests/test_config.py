@@ -36,6 +36,27 @@ def test_config_env_override(tmp_path, monkeypatch):
     assert cfg.api_key == "sk-test"
 
 
+def test_env_base_prefers_dashboard_url_over_api_base(tmp_path, monkeypatch):
+    """OPENAI_BASE_URL must win over OPENAI_API_BASE.
+
+    The startup probe builds the slot URL from OPENAI_BASE_URL first, and the
+    dashboard reads/writes OPENAI_BASE_URL only.  When _apply_env() preferred
+    OPENAI_API_BASE, a stale ``OPENAI_API_BASE`` made the probe validate the
+    dashboard endpoint while the harness called the other host, surfacing as
+    "llm provider error: unauthorized" despite valid credentials.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for k in _OPENAI_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://dashboard.test/v1")
+    monkeypatch.setenv("OPENAI_API_BASE", "http://stale.test/v1")
+    assert load_config().api_base == "http://dashboard.test/v1"
+
+    # OPENAI_API_BASE alone is still honored.
+    monkeypatch.delenv("OPENAI_BASE_URL")
+    assert load_config().api_base == "http://stale.test/v1"
+
+
 def test_config_from_file(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     for k in _OPENAI_ENV_KEYS:

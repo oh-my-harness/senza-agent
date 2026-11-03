@@ -201,10 +201,15 @@ def _apply_env(cfg: Config) -> None:
     if env_api_key:
         cfg.api_key = env_api_key
 
+    # OPENAI_BASE_URL before OPENAI_API_BASE: the dashboard reads and writes
+    # OPENAI_BASE_URL, and ensure_env_defaults() builds the probe's slot URL
+    # from it first.  Resolving them the other way round made the probe
+    # validate one host while the harness talked to another, which surfaces as
+    # "llm provider error: unauthorized" with perfectly good credentials.
     env_api_base = (
         os.environ.get("SENZA_AGENT_API_BASE")
-        or os.environ.get("OPENAI_API_BASE")
         or os.environ.get("OPENAI_BASE_URL")
+        or os.environ.get("OPENAI_API_BASE")
     )
     if env_api_base:
         cfg.api_base = env_api_base

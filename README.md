@@ -11,8 +11,10 @@ source .venv/bin/activate
 
 # 2. Set your LLM credentials
 export OPENAI_API_KEY=sk-...
-export OPENAI_API_BASE=https://api.openai.com/v1
+export OPENAI_BASE_URL=https://api.openai.com/v1
 export OPENAI_MODEL=gpt-4o
+# (OPENAI_API_BASE is still accepted; OPENAI_BASE_URL wins when both are set,
+#  matching the dashboard's setting name)
 
 # 3. Run
 senza-agent --nostop          # interactive CLI

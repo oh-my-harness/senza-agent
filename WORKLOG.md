@@ -996,3 +996,46 @@ senza_agent/__init__.py），提交后打 tag v0.1.7 触发 build-windows.yml �
   `tag_name: v0.1.7` 修正后才 publish。
 - 已发布：releases/latest = v0.1.7（latest.yml + exe 82MB + blockmap 齐全，
   feed sha512 EEO/f9A+…），桌面端自动更新即可拉到。
+
+## 2026-11-03 | 诊断 "llm provider error: unauthorized"：api_base 解析优先级不一致
+
+**用户报告**：Windows 桌面端升级到 v0.1.8 后，LLM 调用报
+`llm provider error: unauthorized`；面板「测试」通过、curl 直连
+`http://api.hyper-op.com/v1` 也 200，key/网络都正常。
+
+**定位过程（全部实测）**：
+1. v0.1.8 的 diff（052c818 + a5bfeb2）只有 MCP 生命周期和版本号，
+   `config.py` / `tools/standard.py` / `webserver/` 零改动 —— 升级不是原因。
+2. 用仓库内 senza-sdk 1.3.0 复现：错误 key → `llm provider error: unauthorized`
+   （pipeline 的唯一来源是 HTTP 401 → UnauthorizedError，body 被丢弃）；
+   正确 key（`sk-ai76…`）→ 200。模型名写错是 503 `model_not_found`，
+   网络不通是 NetworkError，所以 401 只可能是「发了另一个 token / 打到另一个服务器」。
+3. 读 `cli.py:684-700` 与 `config.py`：启动 probe 用
+   `ensure_env_defaults()` 把 `OPENAI_BASE_URL or OPENAI_API_BASE` 映射到
+   `OPENAI_OPENAI_BASE_URL`，而 `_apply_env()` 解析顺序是
+   `SENZA_AGENT_API_BASE → OPENAI_API_BASE → OPENAI_BASE_URL`。
+   **两处顺序相反**：面板/`.env` 里同时存在 `OPENAI_API_BASE`（旧写法，README
+   一直是这么教的）和 `OPENAI_BASE_URL`（面板保存的键）时，probe 校验的是
+   面板那个地址，harness 实际请求的却是 `OPENAI_API_BASE` 那个旧地址 →
+   同一把 key 打到别的网关，401，症状与"面板测试通过、运行时 unauthorized"完全吻合。
+4. 复现脚本（本地 401 server + 两个 base）：确认 runtime 走的是
+   `OPENAI_API_BASE`，报错文本与用户一致。
+
+**修复**：
+- `senza_agent/config.py::_apply_env`：`OPENAI_BASE_URL` 提到
+  `OPENAI_API_BASE` 前面（`SENZA_AGENT_API_BASE` 仍最高），与 probe、与面板
+  读写保持一致。只设置 `OPENAI_API_BASE` 的老用户行为不变。
+- `tests/test_config.py`：回归测试 `test_env_base_prefers_dashboard_url_over_api_base`
+  （两者同时存在时取 BASE_URL；只设 API_BASE 时仍生效）。
+- `README.md`：示例改用 `OPENAI_BASE_URL`，注明 `OPENAI_API_BASE` 仍兼容。
+- 新增 `scripts/diag_llm_auth.py`：打印所有凭据来源的指纹（长度+sha256 前缀，
+  不泄露原文）、`load_config()` 生效值、base/key 究竟来自哪个环境变量、再依次
+  做一次裸 HTTP 请求和一次真实 provider 调用 —— 以后同类问题一条命令定位。
+
+**验证**：`pytest tests/ -q` → 354 passed, 3 skipped（基线 353+3）。
+smoke：`OPENAI_BASE_URL=hyper-op/v1` + `OPENAI_API_BASE=http://127.0.0.1:18080/v1`
+（401 server）同时存在时，修复前 harness 打到 401 server 报 unauthorized，
+修复后 `api_base from OPENAI_BASE_URL`、真实 chat 200。
+
+**遗留**：`SENZA_AGENT_API_KEY` / `SENZA_AGENT_API_BASE` 仍是面板看不见的
+高优先级覆盖项，用户只能靠 diag 脚本发现；是否在面板里展示/统一命名待定。
