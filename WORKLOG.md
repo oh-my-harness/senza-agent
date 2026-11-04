@@ -1139,3 +1139,27 @@ harness 拿着空 key 发请求。
 **遗留**：仍需用户在 Windows 上重跑修复后的脚本，用 `[diag]` 确认 App 进程内
 实际生效的 base/key 指纹；若仍 401，则问题在 key 本身或网关对 chat 的鉴权，
 与配置解析无关。
+
+## 2026-11-04 | 发布 v0.1.10（空环境变量遮蔽 + 401 自诊断）
+
+**发布内容**：v0.1.10 的构建其实在 2026-11-03 10:17Z 就已由 tag CI 产出
+（run b57fc3e success），但一直停留在 draft，未 publish。本次只做发布动作，
+未重新构建。
+
+**操作**：与 v0.1.9 相同的双 draft 处置——432540721（仅 blockmap）+
+432540722（exe + latest.yml）；把 blockmap 上传到 432540722
+（uploads.github.com），删除 432540721，再 PATCH 432540722
+`draft:false` + `tag_name:v0.1.10` + release notes。
+
+**校验**：
+- 发布后 assets 三项齐全（latest.yml 351 B、exe 82,163,536 B、blockmap 87,481 B）；
+- `latest.yml` 内容 `version: 0.1.10`，`size` 与 exe asset 一致；
+- `releases/latest` → v0.1.10；
+- `releases/latest/download/latest.yml` 302 → 200，内容 version 0.1.10，
+  自动更新链路可用（0.1.9 客户端可拉取）。
+- 远端 tag `v0.1.10` 指向 b57fc3e（与本地 6cbce1a tree 完全相同，本地/远端
+  SHA 不同是上次 REST 推提交的遗留，无需处理）。
+
+**注意**：v0.1.10 的构建**不包含**本次刚提交的 `load_config()` 自水化修复
+（92d4f1e，仅本地 main）。该修改只影响诊断脚本与非 CLI 入口的读取一致性，
+不影响 App 启动路径。下一个版本（0.1.11）再带上。
