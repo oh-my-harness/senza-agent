@@ -1319,3 +1319,32 @@ ask_user 挂起中 kill → ask 线程解阻塞（拿到空 answer）、标志�
 是阻塞调用，会卡住事件循环——冒烟时表现为 launch 的 HTTP 响应被拖到 prompt
 返回之后。沙盒里无能为力，真机上 prompt 通常与流同时结束，影响小；后续可改
 `asyncio.to_thread` 或轮询 `is_alive()`。
+
+## 2026-11-04 | 发布 v0.1.13（点 KILL 后命令栏失灵修复）
+
+版本四处同步 0.1.12 → 0.1.13（`desktop/package.json`、`package-lock.json`、
+`pyproject.toml`、`senza_agent/__init__.py`）。本版内容 = 上一条的 kill 修复
+（`c06883d`），无其它改动；全量 `pytest tests -q` → 392 passed / 3 skipped。
+
+**流程**：commit `3e77bf3` → `git push origin main`（5.8s，正常）→ 打 tag
+`v0.1.13` → **tag push 卡死**（120s 超时无输出，`git ls-remote` 也 60s 超时，
+本机到 github 的 git/HTTPS 链路间歇性抽风）→ 改用 REST API 建 tag：
+`POST /git/tags`（5b50b98，指向 `3e77bf3`）+ `POST /git/refs`，CI 立刻触发
+（run 41804172688，约 2 分钟 success）。
+
+**坑**：本地 `git tag -a` 生成的 tag 对象（b85a0ed）与 API 创建的（5b50b98）
+不同 SHA；`git update-ref` 因本地没有该对象而失败，最后本地不留 v0.1.13 tag，
+下次 fetch 自动同步。以后打 tag 直接用 API，别两套并存。
+
+**双 draft 处置**（与 v0.1.9–v0.1.12 同样，且已是正确 tag 名）：433715464
+（仅 blockmap，87,524 B）+ 433715474（exe 82,167,763 B + latest.yml 351 B）。
+下载 blockmap（`--max-time 60`，1.5s 成功）→ 上传到 433715474
+（`uploads.github.com`，返回体用 python 解析时 curl 报 (23) Failed writing
+body，但资产实际已落库，以 API 列表为准）→ 删 433715464 → PATCH
+`draft:false` + release notes。
+
+**校验**：
+- `releases/latest` → v0.1.13（API：draft=False、prerelease=False）；
+- assets 三项齐全：latest.yml 351 B、exe 82,167,763 B、blockmap 87,524 B；
+- `releases/download/v0.1.13/latest.yml`：`version: 0.1.13`，`size` 与 exe
+  asset 一致（82167763），sha512 `q/1VRNNo…`，自动更新链路可用。
