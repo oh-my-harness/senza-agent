@@ -9,11 +9,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 import time
 from typing import Any, Optional
 
 from aiohttp import web, WSMsgType
+
+
+def _annotate_provider_error(wire: dict[str, Any]) -> dict[str, Any]:
+    """Attach the config ``[diag]`` suffix to a provider error event.
+
+    Provider failures can arrive as a stream event or as an exception; the
+    dashboard must always show the effective base/key, so the last-surfaced
+    error carries the same suffix either way.
+    """
+    from senza_agent.config import diag_suffix_for
+
+    for field in ("message", "error", "text"):
+        if isinstance(wire.get(field), str):
+            suffix = diag_suffix_for(wire[field])
+            if suffix:
+                wire[field] += suffix
+                print(f"[senza-agent] {wire[field]}", file=sys.stderr)
+            break
+    return wire
 
 
 class TaskManager:
@@ -99,6 +119,8 @@ class TaskManager:
         """Abort the running task."""
         if not self._running:
             return {"ok": False, "error": "No task running"}
+        # Stops the runner from retrying a failed turn after abort.
+        self._cancel_flag = True
         try:
             self._harness.abort()
         except Exception:
@@ -131,52 +153,82 @@ class TaskManager:
             # run the blocking prompt (positional attachments) on a worker
             # thread.  prompt() raises on LLM failure; stream_events yields
             # until the terminal event or stream exhaustion.
-            prompt_error: list[BaseException] = []
+            from senza_agent.llm_retry import (
+                conversation_size,
+                is_interrupted_stream,
+                retry_budget,
+                retry_delay_ms,
+            )
 
-            def _do_prompt() -> None:
+            max_retries = retry_budget()
+            for attempt in range(max_retries + 1):
+                messages_before = conversation_size(self._harness)
+                error_wire: Optional[dict[str, Any]] = None
+                prompt_error: list[BaseException] = []
+
+                def _do_prompt() -> None:
+                    try:
+                        self._harness.prompt(text, attachments)
+                    except BaseException as exc:  # noqa: BLE001
+                        prompt_error.append(exc)
+
+                import senza
+                prompt_thread = threading.Thread(target=_do_prompt, daemon=True)
+                prompt_thread.start()
                 try:
-                    self._harness.prompt(text, attachments)
-                except BaseException as exc:  # noqa: BLE001
-                    prompt_error.append(exc)
-
-            import senza
-            prompt_thread = threading.Thread(target=_do_prompt, daemon=True)
-            prompt_thread.start()
-            async for ev in senza.stream_events(
-                self._harness, timeout_ms=30000, max_consecutive_timeouts=999999
-            ):
-                if self._cancel_flag:
-                    break
-                wire = self._normalize_event(ev)
-                if wire.get("type") == "error":
-                    # Provider failures can arrive as a stream event instead
-                    # of an exception; attach the same [diag] suffix so the
-                    # dashboard always shows the effective base/key.
-                    from senza_agent.config import diag_suffix_for
-
-                    for field in ("message", "error", "text"):
-                        if isinstance(wire.get(field), str):
-                            suffix = diag_suffix_for(wire[field])
-                            if suffix:
-                                wire[field] += suffix
-                                import sys
-                                print(
-                                    f"[senza-agent] {wire[field]}",
-                                    file=sys.stderr,
-                                )
+                    async for ev in senza.stream_events(
+                        self._harness, timeout_ms=30000, max_consecutive_timeouts=999999
+                    ):
+                        if self._cancel_flag:
                             break
-                await _emit(wire)
-                if wire.get("type") in ("settled", "aborted", "error", "agent_end"):
+                        wire = self._normalize_event(ev)
+                        if wire.get("type") == "error":
+                            error_wire = wire
+                            break
+                        await _emit(wire)
+                        if wire.get("type") in ("settled", "aborted", "agent_end"):
+                            break
+                    prompt_thread.join(timeout=60)
+                    if prompt_error:
+                        raise prompt_error[0]
+                except Exception as exc:  # noqa: BLE001 - provider errors may raise
+                    error_wire = {"type": "error", "message": str(exc)}
+                if error_wire is None or self._cancel_flag:
                     break
-            prompt_thread.join(timeout=60)
-            if prompt_error:
-                raise prompt_error[0]
+                # A stream cut short by the provider/gateway is retryable, but
+                # only when the failed turn was rolled back entirely: if the
+                # history grew (a tool ran), re-prompting would duplicate the
+                # user message and repeat side effects.
+                if not (
+                    is_interrupted_stream(error_wire.get("message", ""))
+                    and attempt < max_retries
+                    and messages_before is not None
+                    and conversation_size(self._harness) == messages_before
+                ):
+                    await _emit(_annotate_provider_error(error_wire))
+                    break
+                delay_ms = retry_delay_ms(attempt)
+                print(
+                    f"[senza-agent] LLM stream interrupted, retrying "
+                    f"({attempt + 1}/{max_retries}): {error_wire.get('message', '')}",
+                    file=sys.stderr,
+                )
+                await _emit({
+                    "type": "retry_attempt",
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries,
+                    "delay_ms": delay_ms,
+                    "error": error_wire.get("message", ""),
+                })
+                waited = 0.0
+                while waited < delay_ms / 1000 and not self._cancel_flag:
+                    await asyncio.sleep(0.1)
+                    waited += 0.1
         except Exception as e:
             from senza_agent.config import diag_suffix
 
             suffix = diag_suffix(e)
             if suffix:
-                import sys
                 print(f"[senza-agent] {e}{suffix}", file=sys.stderr)
             await _emit({"type": "error", "message": str(e) + suffix})
 

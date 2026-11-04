@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -639,20 +640,48 @@ def _print_cost(harness) -> None:
 
 def _run_single_task(harness, task: str, timeout_ms: int = 300000) -> None:
     """Run a single task to completion, printing events as they arrive."""
-    print(f"{BLUE}▶ Running task:{RESET} {task[:200]}\n")
-    try:
-        events = harness.prompt_and_collect(task, timeout_ms=timeout_ms)
-        print_events(events)
-    except KeyboardInterrupt:
-        print(f"\n{YELLOW}Interrupted by user.{RESET}")
-        try:
-            harness.abort()
-        except Exception:
-            pass
-    except Exception as e:
-        from senza_agent.config import diag_suffix
+    from senza_agent.llm_retry import (
+        conversation_size,
+        is_interrupted_stream,
+        retry_budget,
+        retry_delay_ms,
+    )
 
-        print(f"{RED}Task failed: {e}{diag_suffix(e)}{RESET}")
+    print(f"{BLUE}▶ Running task:{RESET} {task[:200]}\n")
+    max_retries = retry_budget()
+    for attempt in range(max_retries + 1):
+        messages_before = conversation_size(harness)
+        try:
+            events = harness.prompt_and_collect(task, timeout_ms=timeout_ms)
+            print_events(events)
+            return
+        except KeyboardInterrupt:
+            print(f"\n{YELLOW}Interrupted by user.{RESET}")
+            try:
+                harness.abort()
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            from senza_agent.config import diag_suffix
+
+            # Retry only an interrupted stream whose turn was rolled back —
+            # otherwise re-prompting would duplicate the user message and
+            # re-run tools that already produced side effects.
+            if not (
+                is_interrupted_stream(str(e))
+                and attempt < max_retries
+                and messages_before is not None
+                and conversation_size(harness) == messages_before
+            ):
+                print(f"{RED}Task failed: {e}{diag_suffix(e)}{RESET}")
+                return
+            delay_s = retry_delay_ms(attempt) / 1000
+            print(
+                f"{YELLOW}LLM stream interrupted, retrying "
+                f"({attempt + 1}/{max_retries}) in {delay_s:.0f}s…{RESET}"
+            )
+            time.sleep(delay_s)
 
 
 def _interactive_repl(harness, timeout_ms: int = 300000) -> None:

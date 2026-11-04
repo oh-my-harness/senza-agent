@@ -1209,3 +1209,49 @@ senza 1.2.1 缺 `image_base64`、缺 `pytest-aiohttp` fixture）。
 版本四处同步 0.1.10 → 0.1.11；本版内容 = 上一条的修复 + `load_config()` 自水化
 + 401 stream error 事件自诊断。tag `v0.1.11` 触发 Windows CI 出包后，
 按惯例合并双 draft（exe+latest.yml 与 blockmap）再 publish。
+
+## 2026-11-04 | 修复 "llm provider error: stream incomplete"（流中断不可恢复）
+
+**用户报告**：桌面端报 `llm provider error: stream incomplete: 115 chunks
+received, finish_reason=None`，整轮任务直接失败。
+
+**定位（全部实测，未改 SDK）**：
+1. 该错误串出自 `llm-api-adapter`（pinned rev 9111ea5）的
+   `LlmError::StreamIncomplete`（commit 54e20ca, issue #11）：SSE 流中断、
+   或 provider 在 `[DONE]` 前没给过 `finish_reason`/usage 时抛出。
+2. `llm-harness-loop::is_retryable` 只认 RateLimit/Overloaded/Timeout；
+   消费流那一侧只有 `StreamIdle` 会「丢弃半条消息 + 重试」
+   （loop_fn.rs:514）。所以一次瞬态断流就是终态错误。
+3. 用本地 mock SSE（127.0.0.1）复现出**完全一致**的报错文案，并确认：
+   断流后 harness 把整轮回滚——`get_messages()==[]`、`message_count()==0`，
+   用户消息也没落到历史里。因此「重新 prompt 同一句话」是安全的，
+   只要这一轮没有执行过工具（工具副作用不能重放）。
+4. 真实网关（api.hyper-op.com + DeepSeek-V4.1-Flash）实测流是正常的
+   （finish_reason=stop + usage + [DONE]），说明是偶发/链路上游断流，
+   不是配置错误。
+
+**修复**（不依赖 SDK 重编，本仓库内闭环）：
+- 新增 `senza_agent/llm_retry.py`：重试策略（`SENZA_AGENT_STREAM_RETRIES`，
+  默认 2，上限 5；退避 1/2/4/8s）、`is_interrupted_stream()`、
+  `conversation_size()`（只认真正的 int，取不到 = 不重试）。
+- `webserver/task.py::_run_task`：按 attempt 包一层循环。只有
+  「错误是 stream incomplete + 还有预算 + `message_count()` 与失败前相等」
+  才重试；重试前 emit `retry_attempt` 事件（与运行时 wire 格式一致）。
+  事件到达型和异常抛出型错误统一走这条路；最终失败才附 `[diag]`。
+- `cli.py::_run_single_task`：同一策略（阻塞路径），失败前同样校验历史未增长。
+- `qevos_bridge.py`：收到 `retry_attempt` 时丢掉当前 streaming 块，
+  否则重试文本会拼在已显示的截断文本后面。
+- `abort_task()` 现在置 `_cancel_flag`，退避等待期间的中止才有效
+  （该标志此前只读不写，等于死代码）。
+- 测试 `tests/test_stream_retry.py`：策略各分支、回滚后可重试、工具已执行
+  不重试、非断流错误不重试、预算上限、异常路径重试、面板丢弃半截文本。
+
+**验证**：`tests/test_stream_retry.py` 19 passed；全量 `pytest tests -q`
+386 passed / 3 skipped。端到端 mock 冒烟（真实 SDK harness）：
+桌面路径第一轮断流 → 自动重试成功，历史里**只有一条** user 消息，
+面板只保留重试后的 thought；CLI 路径同样打印
+`LLM stream interrupted, retrying (1/2)` 并正常输出答案。
+
+**遗留**：根因（StreamIncomplete 不进入运行时重试分支）在
+`llm-harness-loop`，本次只在应用层兜底；若后续升级 SDK，可考虑上游把
+StreamIncomplete 并入 idle-retry 分支（那里已有 discard+retry 机制）。

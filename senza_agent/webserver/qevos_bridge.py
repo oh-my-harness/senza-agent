@@ -432,6 +432,17 @@ class StateBridge:
         ev_type = ev.get("type", "")
         idx = len(self._current_events)
 
+        # A retried turn starts over: the failed attempt's partial answer was
+        # rolled back in the conversation, so drop its streaming block too —
+        # otherwise the retried text would be appended to the truncated text
+        # already on screen.
+        if ev_type == "retry_attempt":
+            if self._streaming_idx is not None:
+                self._current_events.pop(self._streaming_idx)
+                self._streaming_idx = None
+                return _MODIFIED
+            return None
+
         # Skip low-level / non-rendered events
         if ev_type in (
             "turn_start", "message_start", "message_update", "message_end",
@@ -440,7 +451,7 @@ class StateBridge:
             "session_info_update", "queue_update", "savepoint",
             "branch_forked", "branch_switched", "branch_deleted", "branch_summarized",
             "compaction_start", "compaction_end",
-            "agent_start", "retry_attempt",
+            "agent_start",
             "tool_call_start", "tool_call_args_delta", "tool_call_end",
             "tool_execution_update",
         ):
