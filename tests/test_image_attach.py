@@ -276,6 +276,7 @@ class TestInjectImageEndpoint:
     async def test_awaiting_input_rejected(self, api, aiohttp_client_factory):
         api, sb, tm = api
         sb.state = {"meta": {"awaiting_input": True}}
+        tm._running = True   # a pause only exists while its run is alive
         client = await aiohttp_client_factory(api)
         try:
             r = await client.post("/api/inject-image", json={"image": _PNG_B64})

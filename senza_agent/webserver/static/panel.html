@@ -4199,6 +4199,12 @@ function updateStreamingOutput() {
 }
 
 // ── Agent launch & kill ───────────────────────────────────────────────────
+/** Put a rejected goal back into the command bar so it is never lost. */
+function restoreCmdText(text) {
+  const input = document.getElementById('cmdInput');
+  if (input && !input.value.trim()) { input.value = text; input.focus(); }
+}
+
 async function launchAgent(goal) {
   if (!goal || !goal.trim()) return;
   if (gIsLaunching) { toast('⚠ Already launching…'); return; }
@@ -4222,10 +4228,12 @@ async function launchAgent(goal) {
     } else {
       toast(`✗ ${data.error || 'Launch failed'}`);
       gIsLaunching = false;
+      restoreCmdText(goal);
     }
   } catch (e) {
     toast(`✗ Network error: ${e.message}`);
     gIsLaunching = false;
+    restoreCmdText(goal);
   }
   // gIsLaunching will be cleared when the server broadcasts launching:false
 }
@@ -4313,8 +4321,9 @@ async function sendCmd() {
       if (!runId) { toast('⚠ No active run'); return; }
       try {
         const res = await postJsonWithRetry('/api/inject', { command: raw, runId });
-        if (res.ok) { input.value = ''; toast(`▶ New goal sent`); }
-        else toast('✗ Server rejected');
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body.ok) { input.value = ''; toast(`▶ New goal sent`); }
+        else toast('✗ Server rejected: ' + (body.error || ''));
       } catch { toast('✗ Network error (retried)'); }
       return;
     }
@@ -4368,7 +4377,10 @@ async function sendCmd() {
     const res = await postJsonWithRetry('/api/inject', { command: cmd, runId });
     const resBody = await res.json().catch(() => ({}));
     console.log('[sendCmd] response status=%o body=%o', res.status, resBody);
-    if (res.ok) { input.value = ''; toast(`✓ Sent: ${raw}`); }
+    // The API answers 200 with {ok:false, error} for rejected sends (paused
+    // agent, task still stopping). Clearing the box on those would swallow
+    // the text without a trace.
+    if (res.ok && resBody.ok) { input.value = ''; toast(`✓ Sent: ${raw}`); }
     else toast('✗ Server rejected: ' + (resBody.error || ''));
   } catch (e) { console.error('[sendCmd] error', e); toast('✗ Network error (retried)'); }
 }

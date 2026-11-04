@@ -1282,3 +1282,40 @@ StreamIncomplete 并入 idle-retry 分支（那里已有 discard+retry 机制）
 - assets 三项齐全：latest.yml 351 B、exe 82,166,664 B、blockmap 87,435 B；
 - `releases/download/v0.1.12/latest.yml` 内容 `version: 0.1.12`，
   `size` 与 exe asset 一致，sha512 `iy07kBKd…`，自动更新链路可用。
+
+## 2026-11-04 | 修复：点 Kill 后输入栏「失灵」
+
+**用户报告**：点 KILL 终止任务后，命令栏还能打字但发出去毫无反应（文本被吞、甚至弹「✓ Sent」）。
+
+**根因（两条，均已实测复现）**：
+1. `meta.awaiting_input` 只在 ask_user 的 tool_result 里清除；被 abort 的 run 永远不发
+   tool_result，于是标志永久残留 → `/api/inject` 永远回 "Agent is preparing a
+   question…"，`/api/inject-image` 同一规则。而该接口用 HTTP 200 + `{ok:false}`，
+   前端只判 `res.ok` → 清空输入框并弹成功 toast，表现为「输入被吞」。
+2. `abort_task()` 只置 cancel 标志就返回，`_running` 要等 `_run_task` 收尾才变
+   False。紧接着的下一条消息撞上 "A task is already running"；又因为
+   `on_task_start` / `on_followup` 先于 `start_task` 执行，失败时还留下幽灵
+   running 状态 / 幽灵 goal 事件。
+
+**修复**：
+- `qevos_bridge`：`on_task_end`、`_api_kill`、`_api_inject`、`_api_inject_image`
+  在运行已死时把 `awaiting_input` 当 stale 丢弃。
+- `task.abort_task()`：置 cancel + `harness.abort()` + `get_bridge().reset()`
+  （解阻塞卡在 `ask()` 的 worker 线程，否则 run 永远不结束），然后最多等 5s 到
+  `_running` 归 False，返回 `{"ok": true, "stopped": bool}`。
+- `_api_launch` / `_api_inject`：启动前先判 `task.is_running`（409 / ok:false），
+  不再先改 bridge 状态。
+- `panel.html::sendCmd`：判 `res.ok && body.ok`，服务端拒绝时保留输入不弹成功；
+  `launchAgent` 失败时 `restoreCmdText()` 把目标文本放回输入框。
+
+**验证**：`tests/test_kill_awaiting.py` 6 passed（新增：kill 后立即 start 成功、
+停机中 launch 返回 409 且不改 bridge 状态、停机中 inject 不追加 goal）；
+全量 `pytest tests -q` 389 passed / 3 skipped。端到端 mock 冒烟（aiohttp
+TestClient + 假 harness + 假 SSE）：launch → kill（等停）→ 立即 launch 成功；
+ask_user 挂起中 kill → ask 线程解阻塞（拿到空 answer）、标志清除、随后
+`/api/inject` 正常起新任务。
+
+**遗留（未改，记录）**：`TaskManager._run_task` 里的 `prompt_thread.join(timeout=60)`
+是阻塞调用，会卡住事件循环——冒烟时表现为 launch 的 HTTP 响应被拖到 prompt
+返回之后。沙盒里无能为力，真机上 prompt 通常与流同时结束，影响小；后续可改
+`asyncio.to_thread` 或轮询 `is_alive()`。

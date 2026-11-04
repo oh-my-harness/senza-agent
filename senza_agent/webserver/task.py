@@ -115,8 +115,14 @@ class TaskManager:
         asyncio.ensure_future(self._run_task(text, timeout_ms, attachments))
         return {"ok": True, "task": text[:200]}
 
-    async def abort_task(self) -> dict[str, Any]:
-        """Abort the running task."""
+    async def abort_task(self, wait_timeout: float = 5.0) -> dict[str, Any]:
+        """Abort the running task and wait (bounded) for the run to end.
+
+        ``/api/kill`` is followed by the user typing the next goal almost
+        immediately.  Without waiting, that message races the dying run and
+        ``start_task`` answers "A task is already running" — the dashboard
+        clears the input anyway, so the text silently disappears.
+        """
         if not self._running:
             return {"ok": False, "error": "No task running"}
         # Stops the runner from retrying a failed turn after abort.
@@ -125,7 +131,14 @@ class TaskManager:
             self._harness.abort()
         except Exception:
             pass
-        return {"ok": True}
+        # A pending ask_user blocks its worker thread until the bridge is
+        # signalled; reset() unblocks it so the run can actually finish.
+        from senza_agent.webserver.ask_user_bridge import get_bridge
+        get_bridge().reset()
+        deadline = time.monotonic() + wait_timeout
+        while self._running and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        return {"ok": True, "stopped": not self._running}
 
     async def _run_task(self, text: str, timeout_ms: int, attachments: Optional[list] = None) -> None:
         await self._broadcast({

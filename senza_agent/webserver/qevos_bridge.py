@@ -615,6 +615,12 @@ class StateBridge:
         """
         self._state["agentAlive"] = True
         self._state["status"] = {"status": "idle"}
+        # The run is over: any ask_user pause died with it. The flag is only
+        # cleared on an ask_user tool_result, which an aborted run never emits,
+        # so drop it here or every later follow-up is rejected.
+        meta = self._state.get("meta")
+        if isinstance(meta, dict):
+            meta.pop("awaiting_input", None)
         # Save run to disk
         run_id = self._state.get("activeRunId", f"run_{int(time.time())}")
         if run_id:
@@ -738,16 +744,31 @@ class QevosAPI:
         goal = (body.get("goal") or "").strip()
         if not goal:
             return web.json_response({"error": "goal is required"}, status=400)
+        # Check before touching bridge state: on_task_start resets events/meta,
+        # so a rejected start would otherwise leave a phantom "running" run.
+        if self.task.is_running:
+            return web.json_response(
+                {"ok": False, "error": "The previous task is still stopping, retry in a moment."},
+                status=409)
         await self.sb.on_task_start(goal)
         result = await self.task.start_task(goal)
         return web.json_response(result)
 
     async def _api_kill(self, request: web.Request) -> web.Response:
         result = await self.task.abort_task()
+        # Aborting voids any pending ask_user pause: the bridge is reset below,
+        # so the stale ``awaiting_input`` flag can never be answered — and
+        # because it is otherwise only cleared by an ask_user ``tool_result``
+        # (which a dead run never emits) it would make ``/api/inject`` reject
+        # every follow-up with "Agent is preparing a question…" forever.
+        meta = self.sb._state.get("meta")
+        if isinstance(meta, dict):
+            meta.pop("awaiting_input", None)
+        self.sb._state["status"] = {"status": "idle"}
         self.sb._state["agentAlive"] = False
-        await self.sb.broadcast()
         from senza_agent.webserver.ask_user_bridge import get_bridge
         get_bridge().reset()
+        await self.sb.broadcast()
         return web.json_response(result)
 
     async def _api_inject(self, request: web.Request) -> web.Response:
@@ -767,6 +788,14 @@ class QevosAPI:
         # user's text to the AskUserBridge instead of starting a new task.
         bridge = get_bridge()
         awaiting = self.sb.state.get("meta", {}).get("awaiting_input")
+        # A pause only exists while its run is alive. After an abort/kill the
+        # flag can outlive the run (no ask_user tool_result ever arrives), so
+        # treat it as stale instead of rejecting every later message.
+        if awaiting and not self.task.is_running:
+            meta = self.sb.state.get("meta")
+            if isinstance(meta, dict):
+                meta.pop("awaiting_input", None)
+            awaiting = None
         # Race condition: the tool_execution_start event may set the dashboard
         # to "paused" state before bridge.ask() has set _active=True.  If the
         # state shows awaiting_input, briefly wait for the bridge to become
@@ -782,19 +811,20 @@ class QevosAPI:
             if accepted:
                 return web.json_response({"ok": True, "ask_user_answer": True})
             # Bridge became inactive between the check and the call.
-            # If awaiting_input is still set, don't start a new task —
-            # the agent is in an inconsistent state.
-            if awaiting:
+            # If awaiting_input is still set and the run is alive, don't
+            # start a new task — the agent is in an inconsistent state.
+            if awaiting and self.task.is_running:
                 return web.json_response({
                     "ok": False,
                     "error": "Agent is preparing a question, please wait a moment and retry.",
                 })
         elif awaiting:
             # The dashboard shows awaiting_input but the bridge never became
-            # active.  This means the agent's ask_user tool hasn't executed
-            # yet (still in spawn_blocking) or the stream already timed out.
-            # Do NOT fall through to on_followup/start_task — that would
-            # corrupt state and leave the agent permanently stuck.
+            # active.  While the run is alive this means the agent's ask_user
+            # tool hasn't executed yet (still in spawn_blocking) or the stream
+            # already timed out — fall through would corrupt state and leave
+            # the agent permanently stuck. A dead run has no pause at all, so
+            # the stale flag was already dropped above and this cannot hit.
             return web.json_response({
                 "ok": False,
                 "error": "Agent is preparing a question, please wait a moment and retry.",
@@ -805,6 +835,13 @@ class QevosAPI:
             command = command[len("/inject "):].strip()
         # Follow-up message: append goal event without clearing history.
         # The harness retains conversation context across prompt_async calls.
+        if self.task.is_running:
+            # stop-race: append nothing, or the event log gains a goal line
+            # for a run that never starts.
+            return web.json_response({
+                "ok": False,
+                "error": "The previous task is still stopping, retry in a moment.",
+            })
         await self.sb.on_followup(command)
         result = await self.task.start_task(command)
         return web.json_response(result)
@@ -835,6 +872,12 @@ class QevosAPI:
         from senza_agent.webserver.ask_user_bridge import get_bridge
         bridge = get_bridge()
         awaiting = self.sb.state.get("meta", {}).get("awaiting_input")
+        # Same stale-flag rule as /api/inject: only a live run can be paused.
+        if awaiting and not self.task.is_running:
+            meta = self.sb.state.get("meta")
+            if isinstance(meta, dict):
+                meta.pop("awaiting_input", None)
+            awaiting = None
         if bridge.is_active or awaiting:
             return web.json_response({
                 "ok": False,
