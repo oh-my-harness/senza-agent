@@ -1255,3 +1255,30 @@ received, finish_reason=None`，整轮任务直接失败。
 **遗留**：根因（StreamIncomplete 不进入运行时重试分支）在
 `llm-harness-loop`，本次只在应用层兜底；若后续升级 SDK，可考虑上游把
 StreamIncomplete 并入 idle-retry 分支（那里已有 discard+retry 机制）。
+
+## 2026-11-04 | 发布 v0.1.12（流中断自动重试）
+
+版本四处同步 0.1.11 → 0.1.12（`desktop/package.json`、`package-lock.json`、
+`pyproject.toml`、`senza_agent/__init__.py`）。本版内容 = 上一条的
+「stream incomplete 自动重试」（`4bee6f0`），无其它改动；全量
+`pytest tests -q` → 386 passed / 3 skipped。
+
+**流程**：commit `a77b3c4` → push main（v0.1.11 tag 指向 `12c9c67`，
+新提交在其上）→ 打 tag `v0.1.12` → CI run 41783030057 success（~2 分钟）。
+
+**双 draft 处置**（与 v0.1.9–v0.1.11 同样）：433567976（仅 blockmap）+
+433567980（exe 82,166,664 B + latest.yml 351 B）。本次 draft tag 已是
+`v0.1.12`（没再出现 `untagged-…` 占位）。把 blockmap（87,435 B）上传到
+433567980，删 433567976，再 PATCH `draft:false` + release notes。
+
+**坑**：`GET /releases/assets/{id}` + `Accept: application/octet-stream` 下载
+87KB 附件，前两次分别挂死 180s/超时（重定向到 `release-assets.githubusercontent.com`
+这条链路慢）；加 `--max-time 50` 后 18s 成功，上传 `uploads.github.com` 1.4s。
+另：直接 GET `github.com/.../releases/latest` 的 HTML 页在本机返回 000
+（curl exit 52），改用 API 校验。
+
+**校验**：
+- `releases/latest` → v0.1.12（API：draft=False、prerelease=False）；
+- assets 三项齐全：latest.yml 351 B、exe 82,166,664 B、blockmap 87,435 B；
+- `releases/download/v0.1.12/latest.yml` 内容 `version: 0.1.12`，
+  `size` 与 exe asset 一致，sha512 `iy07kBKd…`，自动更新链路可用。
