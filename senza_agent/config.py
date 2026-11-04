@@ -366,18 +366,32 @@ def credential_diag() -> str:
             states.append(f"{name}=<empty>")
         else:
             states.append(f"{name}=set")
-    return "[diag] " + head + " | " + " ".join(states)
+    override = ""
+    dedicated_key = os.environ.get("SENZA_AGENT_API_KEY")
+    panel_key = os.environ.get("OPENAI_API_KEY")
+    if dedicated_key and panel_key and dedicated_key != panel_key:
+        override = (
+            " !! SENZA_AGENT_API_KEY overrides OPENAI_API_KEY"
+            f" (used key={_fingerprint(dedicated_key)},"
+            f" panel key={_fingerprint(panel_key)})"
+        )
+    return "[diag] " + head + " | " + " ".join(states) + override
+
+
+def diag_suffix_for(message: str) -> str:
+    """Return ``"\\n[diag] …"`` when *message* looks like an auth failure."""
+    low = (message or "").lower()
+    if "unauthorized" not in low and "401" not in low:
+        return ""
+    try:
+        return "\n" + credential_diag()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def diag_suffix(exc: BaseException) -> str:
     """Return ``"\\n[diag] …"`` for auth-ish failures, else an empty string."""
-    message = str(exc).lower()
-    if "unauthorized" in message or "401" in message:
-        try:
-            return "\n" + credential_diag()
-        except Exception:  # noqa: BLE001
-            return ""
-    return ""
+    return diag_suffix_for(str(exc))
 
 
 
@@ -403,8 +417,16 @@ def load_settings_into_env() -> None:
         return
     for key, val in data.items():
         if isinstance(val, dict):
-            # Nested objects (e.g. behavior, compaction) — expand sub-keys
-            # into SENZA_AGENT_<SUBKEY> env vars, mirroring save_settings.
+            # Only ``behavior`` maps 1:1 to ``SENZA_AGENT_*`` env vars — that
+            # is the set ``_apply_env()`` actually reads.  Flattening every
+            # section collided with the credential namespace: ``web.api_key``
+            # (the web-search token) became ``SENZA_AGENT_API_KEY``, which
+            # outranks ``OPENAI_API_KEY`` in ``_apply_env()``, so the LLM was
+            # called with the web-search token → "llm provider error:
+            # unauthorized".  ``web`` / ``compaction`` reach ``load_config()``
+            # through the config.json mirror instead.
+            if key != "behavior":
+                continue
             for sub_key, sub_val in val.items():
                 ssub = str(sub_val).strip() if sub_val is not None else ""
                 env_key = f"SENZA_AGENT_{sub_key.upper()}"

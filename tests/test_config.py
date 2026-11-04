@@ -144,6 +144,45 @@ def test_load_config_reads_settings_json_directly(tmp_path, monkeypatch):
     assert cfg.model == "model-from-dashboard"
 
 
+def test_web_section_key_does_not_hijack_llm_credentials(tmp_path, monkeypatch):
+    """``web.api_key`` must not become ``SENZA_AGENT_API_KEY``.
+
+    Regression: load_settings_into_env() flattened every nested section into
+    ``SENZA_AGENT_<SUBKEY>``, so the web-search token under ``web.api_key``
+    landed in ``SENZA_AGENT_API_KEY`` — which outranks ``OPENAI_API_KEY`` in
+    ``_apply_env()`` — and the LLM was called with the web-search token:
+    "llm provider error: unauthorized" while the dashboard test (which uses
+    OPENAI_API_KEY) passed.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS + (
+        "SENZA_AGENT_API_KEY", "SENZA_AGENT_BASE_URL", "SENZA_AGENT_MODEL",
+        "SENZA_AGENT_THINKING_LEVEL",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    config_dir = tmp_path / ".senza-agent"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text(json.dumps({
+        "OPENAI_BASE_URL": "http://dashboard.test/v1",
+        "OPENAI_API_KEY": "sk-llm-key",
+        "OPENAI_MODEL": "llm-model",
+        "web": {"provider": "bing", "api_key": "tvk-web-search-token"},
+        "compaction": {"model": "compact-model"},
+        "behavior": {"thinking_level": "high"},
+    }))
+
+    cfg = load_config()
+    assert cfg.api_key == "sk-llm-key"
+    assert cfg.model == "llm-model"
+    assert "SENZA_AGENT_API_KEY" not in os.environ
+    assert "SENZA_AGENT_BASE_URL" not in os.environ
+    assert "SENZA_AGENT_MODEL" not in os.environ
+    # behavior still expands (that is what _apply_env reads).
+    assert os.environ["SENZA_AGENT_THINKING_LEVEL"] == "high"
+    assert cfg.behavior.thinking_level == "high"
+
+
 def test_credential_diag_reports_state_without_leaking_key(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS:

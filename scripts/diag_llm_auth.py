@@ -108,6 +108,12 @@ def show_files() -> None:
                     "provider_type"):
             if key in data:
                 print(f"    {key:24} {data[key]}")
+        for section, sub in data.items():
+            if not isinstance(sub, dict):
+                continue
+            for k, v in sub.items():
+                shown = fp(str(v)) if "key" in k.lower() else v
+                print(f"    {section + '.' + k:24} {shown}")
 
 
 def show_effective() -> dict:

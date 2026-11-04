@@ -1163,3 +1163,49 @@ harness 拿着空 key 发请求。
 **注意**：v0.1.10 的构建**不包含**本次刚提交的 `load_config()` 自水化修复
 （92d4f1e，仅本地 main）。该修改只影响诊断脚本与非 CLI 入口的读取一致性，
 不影响 App 启动路径。下一个版本（0.1.11）再带上。
+
+## 2026-11-04 | 定位并修复真正根因：web.api_key 被展开成 SENZA_AGENT_API_KEY
+
+**决定性证据**（用户重跑修复后的诊断脚本，Windows v0.1.10）：
+```
+SENZA_AGENT_API_KEY   len=3 sha256=2c93131632cd tvk
+OPENAI_API_KEY        len=51 sha256=ea05977c0b32 sk-ai7…dcti
+effective api_key     len=3 sha256=2c93131632cd tvk   ← 实际发出去的 key
+[raw probe] HTTP 401 {"message":"Invalid token ..."}
+```
+3 字符的 `tvk` 压过了面板里的 51 字符 key；面板「测试」用的是表单里的
+`OPENAI_API_KEY`，所以通过；harness 用的是 `SENZA_AGENT_API_KEY`，所以 401。
+
+**根因**：`load_settings_into_env()` 把所有嵌套 section 一律摊平成
+`SENZA_AGENT_<SUBKEY>`。`settings.json` 的 `web.api_key`（web 搜索的 token）
+因此变成 `SENZA_AGENT_API_KEY`；而 `_apply_env()` 的优先级是
+`SENZA_AGENT_API_KEY > OPENAI_API_KEY`，于是 LLM 调用拿着 web 搜索 token 发请求。
+同理 `web.base_url` → `SENZA_AGENT_BASE_URL`（会劫持 advisor 的 base）、
+`compaction.model` → `SENZA_AGENT_MODEL`（会覆盖主模型）。
+这也解释了“0.1.7 没问题”：settings.json 的 web/compaction 全量存储是后加的
+（d96c0ba），旧版本没有这条展开路径。
+
+**修复**：
+1. `load_settings_into_env()` 只展开 `behavior`（`_apply_env()` 真正读取的
+   `SENZA_AGENT_THINKING_LEVEL/ADVISOR_INTERVAL/...` 集合）；`web`/`compaction`
+   经 `save_settings()` 镜像到 `config.json`，由 `load_config()` 读取。
+2. `credential_diag()` 增加显式告警：
+   `!! SENZA_AGENT_API_KEY overrides OPENAI_API_KEY (used key=... panel key=...)`。
+3. `webserver/task.py`：provider 失败若以 **stream error 事件** 到达（而非异常），
+   同样追加 `[diag]`，保证桌面端一定看得到生效 base/key。
+4. 诊断脚本 `show_files()` 打印 settings.json 的嵌套 section（`web.api_key` 等，
+   `*key` 掩码），这类问题不再隐身。
+5. 回归测试 `test_web_section_key_does_not_hijack_llm_credentials`：
+   settings.json 同时含 `OPENAI_API_KEY` 与 `web.api_key` 时，生效 key 必须是前者，
+   且 `SENZA_AGENT_API_KEY/BASE_URL/MODEL` 不得被创建；`behavior` 仍正常展开。
+
+**验证**：`tests/test_config.py` 12 passed；临时 HOME + 含 `web.api_key` 的
+settings.json 冒烟：`SENZA_AGENT_API_KEY <unset>`，effective key = 面板 key；
+`tests` 全量 338 passed / 13 failed / 16 errors，失败项与基线一致（本机
+senza 1.2.1 缺 `image_base64`、缺 `pytest-aiohttp` fixture）。
+
+## 2026-11-04 | 发布 v0.1.11（web.api_key 污染 LLM 凭据修复）
+
+版本四处同步 0.1.10 → 0.1.11；本版内容 = 上一条的修复 + `load_config()` 自水化
++ 401 stream error 事件自诊断。tag `v0.1.11` 触发 Windows CI 出包后，
+按惯例合并双 draft（exe+latest.yml 与 blockmap）再 publish。

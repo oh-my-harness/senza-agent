@@ -148,6 +148,23 @@ class TaskManager:
                 if self._cancel_flag:
                     break
                 wire = self._normalize_event(ev)
+                if wire.get("type") == "error":
+                    # Provider failures can arrive as a stream event instead
+                    # of an exception; attach the same [diag] suffix so the
+                    # dashboard always shows the effective base/key.
+                    from senza_agent.config import diag_suffix_for
+
+                    for field in ("message", "error", "text"):
+                        if isinstance(wire.get(field), str):
+                            suffix = diag_suffix_for(wire[field])
+                            if suffix:
+                                wire[field] += suffix
+                                import sys
+                                print(
+                                    f"[senza-agent] {wire[field]}",
+                                    file=sys.stderr,
+                                )
+                            break
                 await _emit(wire)
                 if wire.get("type") in ("settled", "aborted", "error", "agent_end"):
                     break
