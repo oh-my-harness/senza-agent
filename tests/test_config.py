@@ -117,6 +117,33 @@ def test_blank_env_does_not_shadow_settings(tmp_path, monkeypatch):
     assert cfg.model == "model-from-dashboard"
 
 
+def test_load_config_reads_settings_json_directly(tmp_path, monkeypatch):
+    """load_config() alone must see dashboard credentials.
+
+    Regression: ``scripts/diag_llm_auth.py`` (and the webserver's
+    ``rebuild_harness()``) called ``load_config()`` without the CLI's explicit
+    ``load_settings_into_env()``, so on a normal install — where the key and
+    base exist only in settings.json — the effective config came back empty
+    and a 401 looked unexplained.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    config_dir = tmp_path / ".senza-agent"
+    config_dir.mkdir()
+    (config_dir / "settings.json").write_text(json.dumps({
+        "OPENAI_BASE_URL": "http://dashboard.test/v1",
+        "OPENAI_API_KEY": "sk-from-dashboard",
+        "OPENAI_MODEL": "model-from-dashboard",
+    }))
+
+    cfg = load_config()
+    assert cfg.api_base == "http://dashboard.test/v1"
+    assert cfg.api_key == "sk-from-dashboard"
+    assert cfg.model == "model-from-dashboard"
+
+
 def test_credential_diag_reports_state_without_leaking_key(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     for k in _OPENAI_ENV_KEYS + _SETTINGS_ENV_KEYS:

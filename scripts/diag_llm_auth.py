@@ -127,9 +127,9 @@ def show_effective() -> dict:
     key_pref = ["SENZA_AGENT_API_KEY", "OPENAI_API_KEY"]
     base_set = [n for n in base_pref if os.environ.get(n)]
     key_set = [n for n in key_pref if os.environ.get(n)]
-    print(f"  api_base from {base_set[0] if base_set else '<config file>'}"
+    print(f"  api_base from {base_set[0] if base_set else '<none — empty>'}"
           f"  (set: {', '.join(base_set) or 'none'})")
-    print(f"  api_key  from {key_set[0] if key_set else '<config file>'}"
+    print(f"  api_key  from {key_set[0] if key_set else '<none — empty>'}"
           f"  (set: {', '.join(key_set) or 'none'})")
     dashboard_base = os.environ.get("OPENAI_BASE_URL", "")
     if dashboard_base and cfg.api_base != dashboard_base:
@@ -195,14 +195,51 @@ def probe_runtime(cfg) -> None:
         print(f"  FAIL: {type(exc).__name__}: {exc}")
 
 
+def hydrate_like_startup() -> None:
+    """Replicate ``cli.main()`` steps 2–3b before inspecting anything.
+
+    Without this the script only read config.json + the *inherited* process
+    environment, so a machine whose credentials live solely in
+    ``~/.senza-agent/settings.json`` (the normal dashboard setup) was reported
+    as ``api_key=<empty> api_base=<empty>`` — a false negative that also made
+    both probes skip.
+    """
+    try:
+        from senza_agent.cli import load_dotenv_if_present
+
+        load_dotenv_if_present()
+    except Exception as exc:  # noqa: BLE001 - diagnostic path
+        print(f"  <dotenv load failed: {exc}>")
+    try:
+        from senza_agent.config import load_settings_into_env
+
+        load_settings_into_env()
+    except Exception as exc:  # noqa: BLE001 - diagnostic path
+        print(f"  <settings.json load failed: {exc}>")
+    try:
+        from senza_agent.cli import ensure_env_defaults
+
+        ensure_env_defaults()
+    except Exception as exc:  # noqa: BLE001 - diagnostic path
+        print(f"  <env defaults failed: {exc}>")
+
+
 def main() -> int:
     print(f"python  {sys.version.split()[0]} ({sys.executable})")
     print(f"cwd     {os.getcwd()}")
+    try:
+        import senza_agent
+
+        print(f"agent   {senza_agent.__version__} ({senza_agent.__file__})")
+    except Exception as exc:  # noqa: BLE001 - diagnostic path
+        print(f"agent   <import failed: {exc}>")
     try:
         import senza
         print(f"senza   {senza.version()}")
     except Exception as exc:  # noqa: BLE001 - diagnostic path
         print(f"senza   <import failed: {exc}>")
+    print("── startup hydration (same order as cli.main) ────────────────────")
+    hydrate_like_startup()
     show_env()
     show_files()
     cfg = show_effective()

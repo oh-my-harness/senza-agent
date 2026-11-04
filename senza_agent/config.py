@@ -279,7 +279,16 @@ def load_config() -> Config:
       - ``sessions_dir`` → ``~/.senza-agent/sessions/``
       - ``audit_path`` → ``~/.senza-agent/audit.jsonl``
       - ``skills_dir`` → ``$SENZA_AGENT_DIR/SKILLS`` or ``<repo root>/SKILLS/`` if it exists
+
+    ``settings.json`` (the dashboard's write path) is hydrated into the
+    environment here, not only in ``cli.main()``: every entry point — the
+    webserver's ``rebuild_harness()``, tool helpers, ``scripts/diag_llm_auth.py``
+    — must see the same credentials.  Previously a caller that invoked
+    ``load_config()`` directly (without ``load_settings_into_env()`` first)
+    reported an empty api_key/api_base while the app used the dashboard values.
+    Existing non-empty env vars still win (see ``load_settings_into_env``).
     """
+    load_settings_into_env()
     cfg = Config()
     _apply_file(cfg, _load_file())
     _apply_env(cfg)

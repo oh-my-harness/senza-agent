@@ -1102,3 +1102,40 @@ harness 拿着空 key 发请求。
 **为什么这次敢发版**：即使空变量不是用户机器上的真实原因，v0.1.10 起 401 的
 错误文本自带 base/key 指纹/变量态，下一次报错本身就是诊断报告，不需要再靠猜。
 
+
+## 2026-11-04 | 诊断脚本误报"effective config 为空"：settings.json 未参与 load_config
+
+**用户实测输出**（Windows，v0.1.10 桌面端）：
+- 进程环境里 `OPENAI_*` / `SENZA_AGENT_*` **全部 unset**；
+- 凭据只存在于 `C:\Users\<user>\.senza-agent\settings.json`（key len=51、base 正确）；
+- `diag_llm_auth.py` 却报 `api_base=<empty>`、`api_key=<empty>`、`model gpt-4o`，
+  两个 probe 直接 skip —— 诊断结论与用户实际配置矛盾。
+
+**根因（脚本缺陷，不是线上配置缺陷）**：`load_settings_into_env()` 只在
+`cli.main()` 里被显式调用；`load_config()` 自身不读 settings.json。诊断脚本
+直接 `load_config()`，所以永远看不到"凭据只在 settings.json"这种最常见布局，
+给出假阴性。`WebServer.rebuild_harness()` 等非 CLI 入口有同样盲区。
+
+**修复**：
+1. `config.py::load_config()` 开头调用 `load_settings_into_env()` —— 任何入口拿到
+   的配置都与桌面端一致；已有非空环境变量仍优先（语义不变）。
+2. `cli.py` 启动时 settings.json 加载失败的 `except: pass` 改为 stderr 告警：
+   之前这条路径失败会让 harness 用默认 base 打官方 API，正是
+   `llm provider error: unauthorized` 的样子。
+3. `scripts/diag_llm_auth.py`：新增 `hydrate_like_startup()`（dotenv → settings →
+   ensure_env_defaults，与 `cli.main` 2/3a/3b 同序），并打印
+   `senza_agent` 版本与 `__file__`（区分仓库副本 / 安装目录 resources）。
+   空值来源标签由 `<config file>` 改为 `<none — empty>`，避免误导。
+4. 回归测试 `test_load_config_reads_settings_json_directly`：只写 settings.json、
+   不调用 `load_settings_into_env()`，断言 key/base/model 生效。
+
+**验证**：`tests/test_config.py` 11 passed；临时 HOME + 仅 settings.json 冒烟，
+修复后 diag 输出 `OPENAI_API_KEY len=…`、`api_base from OPENAI_BASE_URL`、
+`api_key from OPENAI_API_KEY`，raw probe 按真实 base 发出。
+全量 `pytest tests -q`：337 passed / 13 failed / 16 errors；失败与改动前基线
+（336 passed / 13 failed / 16 errors）逐项一致，均为本机 senza 1.2.1 缺
+`image_base64`、缺 `pytest-aiohttp` fixture，属环境问题。
+
+**遗留**：仍需用户在 Windows 上重跑修复后的脚本，用 `[diag]` 确认 App 进程内
+实际生效的 base/key 指纹；若仍 401，则问题在 key 本身或网关对 chat 的鉴权，
+与配置解析无关。

@@ -693,8 +693,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from senza_agent.config import load_settings_into_env
         load_settings_into_env()
-    except Exception:
-        pass
+    except Exception as e:
+        # Was silently swallowed: a failure here leaves the harness without
+        # credentials (default base → official API → "unauthorized").
+        print(
+            f"{YELLOW}[senza-agent] settings.json load failed: {e}{RESET}",
+            file=sys.stderr,
+        )
 
     # 3b. Set env defaults and map standard OPENAI_* vars to slot prefixes.
     ensure_env_defaults()
